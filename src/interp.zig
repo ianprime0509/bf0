@@ -4,13 +4,29 @@ const Allocator = mem.Allocator;
 const Prog = @import("Prog.zig");
 const Inst = Prog.Inst;
 
+pub const Options = struct {
+    eof: Eof = .{ .value = 0 },
+
+    pub const Eof = union(enum) {
+        no_change,
+        value: u8,
+    };
+};
+
 pub fn interp(
     allocator: Allocator,
     prog: Prog,
     reader: anytype,
     writer: anytype,
+    options: Options,
 ) Interp(@TypeOf(reader), @TypeOf(writer)) {
-    return Interp(@TypeOf(reader), @TypeOf(writer)).init(allocator, prog, reader, writer);
+    return Interp(@TypeOf(reader), @TypeOf(writer)).init(
+        allocator,
+        prog,
+        reader,
+        writer,
+        options,
+    );
 }
 
 pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
@@ -22,10 +38,17 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
         memory: Memory,
         input: InputReader,
         output: OutputWriter,
+        options: Options,
 
         const Self = @This();
 
-        pub fn init(allocator: Allocator, prog: Prog, input: InputReader, output: OutputWriter) Self {
+        pub fn init(
+            allocator: Allocator,
+            prog: Prog,
+            input: InputReader,
+            output: OutputWriter,
+            options: Options,
+        ) Self {
             return .{
                 .tags = prog.insts.items(.tag),
                 .values = prog.insts.items(.value),
@@ -33,6 +56,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
                 .memory = .{ .allocator = allocator },
                 .input = input,
                 .output = output,
+                .options = options,
             };
         }
 
@@ -55,11 +79,15 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
                 .add => try int.memory.add(int.values[int.pc], int.offsets[int.pc]),
                 .move => int.memory.move(int.offsets[int.pc]),
                 .in => {
-                    const b = int.input.readByte() catch |err| switch (err) {
-                        error.EndOfStream => @as(u8, 0),
+                    if (int.input.readByte()) |b| {
+                        try int.memory.set(b, int.offsets[int.pc]);
+                    } else |err| switch (err) {
+                        error.EndOfStream => switch (int.options.eof) {
+                            .no_change => {},
+                            .value => |value| try int.memory.set(value, int.offsets[int.pc]),
+                        },
                         else => |other_err| return other_err,
-                    };
-                    try int.memory.set(b, int.offsets[int.pc]);
+                    }
                 },
                 .out => try int.output.writeByte(int.memory.get(int.offsets[int.pc])),
                 .loop_start => if (int.memory.get(0) == 0) {
