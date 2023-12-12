@@ -3,6 +3,7 @@ const mem = std.mem;
 const log = std.log;
 const Prog = @import("Prog.zig");
 const interp = @import("interp.zig");
+const optimize = @import("optimize.zig");
 
 const usage =
     \\Usage: bf0 [options] [input]
@@ -65,6 +66,11 @@ pub fn main() !void {
 
     var prog = try Prog.parse(allocator, source);
     defer prog.deinit(allocator);
+    for (optimize.passes) |pass| {
+        const optimized_prog = try pass(allocator, prog);
+        prog.deinit(allocator);
+        prog = optimized_prog;
+    }
 
     var stdin_buf = std.io.bufferedReader(std.io.getStdIn().reader());
     var stdout_buf = std.io.bufferedWriter(std.io.getStdOut().writer());
