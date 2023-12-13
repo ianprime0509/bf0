@@ -107,35 +107,17 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
 
 pub const Memory = struct {
     pos: u32 = 0,
-    // TODO: optimizations
-    l2: L2Table = .{},
+    pages: [n_pages]?*Page = .{null} ** n_pages,
     allocator: Allocator,
 
-    const page_size = 4096;
-    const table_size = 1024;
-
-    const L2Table = struct {
-        l1s: [table_size]*L1Table = undefined,
-        l1s_valid: std.StaticBitSet(table_size) = std.StaticBitSet(table_size).initEmpty(),
-    };
-
-    const L1Table = struct {
-        pages: [table_size]*Page = undefined,
-        pages_valid: std.StaticBitSet(table_size) = std.StaticBitSet(table_size).initEmpty(),
-    };
+    const page_size = 1024 * 1024;
+    const n_pages = (1 << 32) / page_size;
 
     const Page = [page_size]u8;
 
     pub fn deinit(m: *Memory) void {
-        for (m.l2.l1s, 0..) |l1, i| {
-            if (m.l2.l1s_valid.isSet(i)) {
-                for (l1.pages, 0..) |page, j| {
-                    if (l1.pages_valid.isSet(j)) {
-                        m.allocator.destroy(page);
-                    }
-                }
-                m.allocator.destroy(l1);
-            }
+        for (m.pages) |page| {
+            if (page) |p| m.allocator.destroy(p);
         }
         m.* = undefined;
     }
@@ -145,46 +127,30 @@ pub const Memory = struct {
     }
 
     pub fn add(m: *Memory, value: u8, offset: u32) Allocator.Error!void {
-        const ptr = try m.getPtr(offset);
-        ptr.* +%= value;
+        const pos = m.pos +% offset;
+        const page = m.pages[pos / page_size] orelse page: {
+            const page = try m.allocator.create(Page);
+            @memset(page, 0);
+            m.pages[pos / page_size] = page;
+            break :page page;
+        };
+        page[pos % page_size] +%= value;
     }
 
     pub fn get(m: Memory, offset: u32) u8 {
         const pos = m.pos +% offset;
-        const l1_index = pos / (table_size * page_size);
-        const page_index = (pos % (table_size * page_size)) / page_size;
-        const index = pos % page_size;
-        if (!m.l2.l1s_valid.isSet(l1_index)) return 0;
-        const l1 = m.l2.l1s[l1_index];
-        if (!l1.pages_valid.isSet(page_index)) return 0;
-        const page = l1.pages[page_index];
-        return page[index];
+        const page = m.pages[pos / page_size] orelse return 0;
+        return page[pos % page_size];
     }
 
     pub fn set(m: *Memory, value: u8, offset: u32) Allocator.Error!void {
-        const ptr = try m.getPtr(offset);
-        ptr.* = value;
-    }
-
-    fn getPtr(m: *Memory, offset: u32) !*u8 {
         const pos = m.pos +% offset;
-        const l1_index = pos / (table_size * page_size);
-        const page_index = (pos % (table_size * page_size)) / page_size;
-        const index = pos % page_size;
-        if (!m.l2.l1s_valid.isSet(l1_index)) {
-            const l1 = try m.allocator.create(L1Table);
-            l1.* = .{};
-            m.l2.l1s[l1_index] = l1;
-            m.l2.l1s_valid.set(l1_index);
-        }
-        const l1 = m.l2.l1s[l1_index];
-        if (!l1.pages_valid.isSet(page_index)) {
+        const page = m.pages[pos / page_size] orelse page: {
             const page = try m.allocator.create(Page);
             @memset(page, 0);
-            l1.pages[page_index] = page;
-            l1.pages_valid.set(page_index);
-        }
-        const page = l1.pages[page_index];
-        return &page[index];
+            m.pages[pos / page_size] = page;
+            break :page page;
+        };
+        page[pos % page_size] = value;
     }
 };
