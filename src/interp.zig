@@ -76,6 +76,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
         pub fn step(int: *Self) RunError!bool {
             switch (int.tags[int.pc]) {
                 .halt => return true,
+                .set => try int.memory.set(int.values[int.pc], int.offsets[int.pc]),
                 .add => try int.memory.add(int.values[int.pc], int.offsets[int.pc]),
                 .move => int.memory.move(int.offsets[int.pc]),
                 .in => {

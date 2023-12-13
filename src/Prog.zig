@@ -16,6 +16,9 @@ pub const Inst = struct {
     pub const Tag = enum {
         /// `value` and `offset` are undefined.
         halt,
+        /// `value` is the value to set to.
+        /// `offset` is used.
+        set,
         /// `value` is the value to add.
         /// `offset` is used.
         add,
@@ -177,6 +180,7 @@ pub fn dump(prog: Prog, writer: anytype) @TypeOf(writer).Error!void {
     for (tags, values, offsets) |tag, value, offset| {
         switch (tag) {
             .halt => try writer.writeAll("halt\n"),
+            .set => try writer.print("set {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
             .add => try writer.print("add {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
             .move => try writer.print("move {}\n", .{@as(i32, @bitCast(offset))}),
             .in => try writer.print("in @ {}\n", .{@as(i32, @bitCast(offset))}),
