@@ -78,5 +78,6 @@ pub fn main() !void {
     defer int.deinit();
 
     try int.run();
+    //try prog.dump(stdout_buf.writer());
     try stdout_buf.flush();
 }

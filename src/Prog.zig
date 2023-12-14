@@ -10,32 +10,33 @@ pub const Inst = struct {
     tag: Tag,
     value: u8,
     offset: u32,
+    extra: u32,
 
     pub const List = std.MultiArrayList(Inst);
 
     pub const Tag = enum {
-        /// `value` and `offset` are undefined.
+        /// Halts the program.
         halt,
-        /// `value` is the value to set to.
-        /// `offset` is used.
+        /// `mem[mp + offset] = value`
         set,
-        /// `value` is the value to add.
-        /// `offset` is used.
+        /// `mem[mp + offset] += value`
         add,
-        /// `value` is undefined.
-        /// `offset` is used.
+        /// `mem[mp + offset] = value * mem[mp + offset + extra]`
+        add_mul,
+        /// `mp += offset`
         move,
-        /// `value` is undefined.
-        /// `offset` is used (the cell to read to).
+        /// `mem[mp + offset] = in()`
         in,
-        /// `value` is undefined.
-        /// `offset` is used (the cell to write).
+        /// `out(mem[mp + offset])`
         out,
-        /// `value` is undefined.
-        /// `offset` is used (the matching `loop_end`).
+        /// `if (mem[mp] == 0) pc += offset`
+        ///
+        /// Guaranteed to be balanced with `loop_end`.
         loop_start,
-        /// `value` is undefined.
-        /// `offset` is used (the matching `loop_start`).
+        /// `pc -= offset + 1`
+        /// (set `pc` so that the next instruction executed is at `pc - offset`)
+        ///
+        /// Guaranteed to be balanced with `loop_start`.
         loop_end,
     };
 };
@@ -67,6 +68,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                             .tag = .move,
                             .value = undefined,
                             .offset = offset,
+                            .extra = undefined,
                         });
                         current_op = .{ .add = inc };
                     },
@@ -81,6 +83,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                             .tag = .add,
                             .value = value,
                             .offset = 0,
+                            .extra = undefined,
                         });
                         current_op = .{ .move = inc };
                     },
@@ -95,6 +98,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                             .tag = .add,
                             .value = value,
                             .offset = 0,
+                            .extra = undefined,
                         });
                         current_op = .none;
                     },
@@ -103,6 +107,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                             .tag = .move,
                             .value = undefined,
                             .offset = offset,
+                            .extra = undefined,
                         });
                     },
                 }
@@ -112,11 +117,13 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                         .tag = .in,
                         .value = undefined,
                         .offset = 0,
+                        .extra = undefined,
                     }),
                     '.' => try insts.append(allocator, .{
                         .tag = .out,
                         .value = undefined,
                         .offset = 0,
+                        .extra = undefined,
                     }),
                     '[' => {
                         const index: u32 = @intCast(insts.len);
@@ -124,6 +131,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                             .tag = .loop_start,
                             .value = undefined,
                             .offset = undefined,
+                            .extra = undefined,
                         });
                         try pending_loop_starts.append(allocator, index);
                     },
@@ -135,6 +143,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                             .tag = .loop_end,
                             .value = undefined,
                             .offset = loop_start -% index,
+                            .extra = undefined,
                         });
                     },
                     else => unreachable,
@@ -151,6 +160,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                 .tag = .add,
                 .value = value,
                 .offset = 0,
+                .extra = undefined,
             });
             current_op = .none;
         },
@@ -159,6 +169,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                 .tag = .move,
                 .value = undefined,
                 .offset = offset,
+                .extra = undefined,
             });
         },
     }
@@ -166,6 +177,7 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
         .tag = .halt,
         .value = undefined,
         .offset = undefined,
+        .extra = undefined,
     });
 
     return .{
@@ -174,14 +186,17 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
 }
 
 pub fn dump(prog: Prog, writer: anytype) @TypeOf(writer).Error!void {
-    const tags = prog.insts.items(.tag);
-    const values = prog.insts.items(.value);
-    const offsets = prog.insts.items(.offset);
-    for (tags, values, offsets) |tag, value, offset| {
+    for (
+        prog.insts.items(.tag),
+        prog.insts.items(.value),
+        prog.insts.items(.offset),
+        prog.insts.items(.extra),
+    ) |tag, value, offset, extra| {
         switch (tag) {
             .halt => try writer.writeAll("halt\n"),
             .set => try writer.print("set {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
             .add => try writer.print("add {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
+            .add_mul => try writer.print("add-mul {} * {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(extra)), @as(i32, @bitCast(offset)) }),
             .move => try writer.print("move {}\n", .{@as(i32, @bitCast(offset))}),
             .in => try writer.print("in @ {}\n", .{@as(i32, @bitCast(offset))}),
             .out => try writer.print("out @ {}\n", .{@as(i32, @bitCast(offset))}),

@@ -34,6 +34,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
         tags: []const Inst.Tag,
         values: []const u8,
         offsets: []const u32,
+        extras: []const u32,
         pc: u32 = 0,
         memory: Memory,
         input: InputReader,
@@ -53,6 +54,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
                 .tags = prog.insts.items(.tag),
                 .values = prog.insts.items(.value),
                 .offsets = prog.insts.items(.offset),
+                .extras = prog.insts.items(.extra),
                 .memory = .{ .allocator = allocator },
                 .input = input,
                 .output = output,
@@ -78,6 +80,10 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
                 .halt => return true,
                 .set => try int.memory.set(int.values[int.pc], int.offsets[int.pc]),
                 .add => try int.memory.add(int.values[int.pc], int.offsets[int.pc]),
+                .add_mul => {
+                    const mul = int.values[int.pc] *% int.memory.get(int.offsets[int.pc] +% int.extras[int.pc]);
+                    try int.memory.add(mul, int.offsets[int.pc]);
+                },
                 .move => int.memory.move(int.offsets[int.pc]),
                 .in => {
                     if (int.input.readByte()) |b| {
