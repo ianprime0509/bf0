@@ -52,12 +52,12 @@ pub fn zeroLoops(allocator: Allocator, prog: Prog) Allocator.Error!Prog {
             .loop_end => {
                 const pos: u32 = @intCast(insts.len);
                 const start = pending_loop_starts.pop();
-                insts.items(.offset)[start] = pos - start;
+                insts.items(.extra)[start] = pos - start;
                 try insts.append(allocator, .{
                     .tag = .loop_end,
                     .value = undefined,
-                    .offset = start -% pos,
-                    .extra = undefined,
+                    .offset = undefined,
+                    .extra = start -% pos,
                 });
             },
             else => try insts.append(allocator, .{
@@ -150,12 +150,12 @@ pub fn mulLoops(allocator: Allocator, prog: Prog) Allocator.Error!Prog {
             .loop_end => {
                 const pos: u32 = @intCast(insts.len);
                 const start = pending_loop_starts.pop();
-                insts.items(.offset)[start] = pos - start;
+                insts.items(.extra)[start] = pos - start;
                 try insts.append(allocator, .{
                     .tag = .loop_end,
                     .value = undefined,
-                    .offset = start -% pos,
-                    .extra = undefined,
+                    .offset = undefined,
+                    .extra = start -% pos,
                 });
             },
             else => try insts.append(allocator, .{
@@ -231,12 +231,12 @@ pub fn offsetize(allocator: Allocator, prog: Prog) Allocator.Error!Prog {
                     .loop_end => {
                         const pos: u32 = @intCast(insts.len);
                         const start = pending_loop_starts.pop();
-                        insts.items(.offset)[start] = pos - start;
+                        insts.items(.extra)[start] = pos - start;
                         try insts.append(allocator, .{
                             .tag = .loop_end,
                             .value = undefined,
-                            .offset = start -% pos,
-                            .extra = undefined,
+                            .offset = undefined,
+                            .extra = start -% pos,
                         });
                     },
                     else => unreachable,

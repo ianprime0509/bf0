@@ -98,11 +98,11 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
                 },
                 .out => try int.output.writeByte(int.memory.get(int.offsets[int.pc])),
                 .loop_start => if (int.memory.get(0) == 0) {
-                    int.pc += int.offsets[int.pc] + 1;
+                    int.pc += int.extras[int.pc] + 1;
                     return false;
                 },
                 .loop_end => {
-                    int.pc +%= int.offsets[int.pc];
+                    int.pc +%= int.extras[int.pc];
                     return false;
                 },
             }

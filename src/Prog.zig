@@ -29,12 +29,12 @@ pub const Inst = struct {
         in,
         /// `out(mem[mp + offset])`
         out,
-        /// `if (mem[mp] == 0) pc += offset`
+        /// `if (mem[mp] == 0) pc += extra`
         ///
         /// Guaranteed to be balanced with `loop_end`.
         loop_start,
-        /// `pc -= offset + 1`
-        /// (set `pc` so that the next instruction executed is at `pc - offset`)
+        /// `pc -= extra + 1`
+        /// (set `pc` so that the next instruction executed is at `pc - extra`)
         ///
         /// Guaranteed to be balanced with `loop_start`.
         loop_end,
@@ -138,12 +138,12 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
                     ']' => {
                         const loop_start = pending_loop_starts.popOrNull() orelse return error.ParseError;
                         const index: u32 = @intCast(insts.len);
-                        insts.items(.offset)[loop_start] = index - loop_start;
+                        insts.items(.extra)[loop_start] = index - loop_start;
                         try insts.append(allocator, .{
                             .tag = .loop_end,
                             .value = undefined,
-                            .offset = loop_start -% index,
-                            .extra = undefined,
+                            .offset = undefined,
+                            .extra = loop_start -% index,
                         });
                     },
                     else => unreachable,
@@ -200,8 +200,8 @@ pub fn dump(prog: Prog, writer: anytype) @TypeOf(writer).Error!void {
             .move => try writer.print("move {}\n", .{@as(i32, @bitCast(offset))}),
             .in => try writer.print("in @ {}\n", .{@as(i32, @bitCast(offset))}),
             .out => try writer.print("out @ {}\n", .{@as(i32, @bitCast(offset))}),
-            .loop_start => try writer.print("loop-start -> {}\n", .{offset}),
-            .loop_end => try writer.print("loop-end -> -{} \n", .{-%offset}),
+            .loop_start => try writer.print("loop-start -> {}\n", .{extra}),
+            .loop_end => try writer.print("loop-end -> -{} \n", .{-%extra}),
         }
     }
 }
