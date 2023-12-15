@@ -73,11 +73,8 @@ pub fn main() !void {
     }
 
     var stdin_buf = std.io.bufferedReader(std.io.getStdIn().reader());
-    var stdout_buf = std.io.bufferedWriter(std.io.getStdOut().writer());
-    var int = interp.interp(allocator, prog, stdin_buf.reader(), stdout_buf.writer(), options);
+    var int = interp.interp(allocator, prog, stdin_buf.reader(), std.io.getStdOut().writer(), options);
     defer int.deinit();
 
     try int.run();
-    //try prog.dump(stdout_buf.writer());
-    try stdout_buf.flush();
 }
