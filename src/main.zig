@@ -73,7 +73,7 @@ pub fn main() !void {
     }
 
     var stdin_buf = std.io.bufferedReader(std.io.getStdIn().reader());
-    var int = interp.interp(allocator, prog, stdin_buf.reader(), std.io.getStdOut().writer(), options);
+    var int = try interp.interp(allocator, prog, stdin_buf.reader(), std.io.getStdOut().writer(), options);
     defer int.deinit();
 
     try int.run();

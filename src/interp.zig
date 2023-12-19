@@ -19,8 +19,10 @@ pub fn interp(
     reader: anytype,
     writer: anytype,
     options: Options,
-) Interp(@TypeOf(reader), @TypeOf(writer)) {
-    return Interp(@TypeOf(reader), @TypeOf(writer)).init(
+) Allocator.Error!Interp(@TypeOf(reader), @TypeOf(writer), MappedMemory) {
+    // TODO: make memory type configurable
+    // TODO: refine errors induced by memory type
+    return Interp(@TypeOf(reader), @TypeOf(writer), MappedMemory).init(
         allocator,
         prog,
         reader,
@@ -29,7 +31,7 @@ pub fn interp(
     );
 }
 
-pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
+pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime Memory: type) type {
     return struct {
         tags: []const Inst.Tag,
         values: []const u8,
@@ -49,13 +51,13 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
             input: InputReader,
             output: OutputWriter,
             options: Options,
-        ) Self {
+        ) Allocator.Error!Self {
             return .{
                 .tags = prog.insts.items(.tag),
                 .values = prog.insts.items(.value),
                 .offsets = prog.insts.items(.offset),
                 .extras = prog.insts.items(.extra),
-                .memory = .{ .allocator = allocator },
+                .memory = try Memory.init(allocator),
                 .input = input,
                 .output = output,
                 .options = options,
@@ -112,7 +114,46 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type) type {
     };
 }
 
-pub const Memory = struct {
+pub const MappedMemory = struct {
+    pos: u32 = 0,
+    memory: []align(mem.page_size) u8,
+
+    pub fn init(_: Allocator) Allocator.Error!MappedMemory {
+        return .{
+            .memory = std.os.mmap(
+                null,
+                1 << 32,
+                std.os.PROT.READ | std.os.PROT.WRITE,
+                std.os.MAP.PRIVATE | std.os.MAP.ANONYMOUS | std.os.MAP.NORESERVE,
+                -1,
+                0,
+            ) catch return error.OutOfMemory,
+        };
+    }
+
+    pub fn deinit(m: *MappedMemory) void {
+        std.os.munmap(m.memory);
+        m.* = undefined;
+    }
+
+    pub fn move(m: *MappedMemory, offset: u32) void {
+        m.pos +%= offset;
+    }
+
+    pub fn add(m: *MappedMemory, value: u8, offset: u32) error{}!void {
+        m.memory[m.pos +% offset] +%= value;
+    }
+
+    pub fn get(m: *MappedMemory, offset: u32) u8 {
+        return m.memory[m.pos +% offset];
+    }
+
+    pub fn set(m: *MappedMemory, value: u8, offset: u32) error{}!void {
+        m.memory[m.pos +% offset] = value;
+    }
+};
+
+pub const PagedMemory = struct {
     pos: u32 = 0,
     pages: [n_pages]?*Page = .{null} ** n_pages,
     allocator: Allocator,
@@ -122,18 +163,22 @@ pub const Memory = struct {
 
     const Page = [page_size]u8;
 
-    pub fn deinit(m: *Memory) void {
+    pub fn init(allocator: Allocator) error{}!PagedMemory {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(m: *PagedMemory) void {
         for (m.pages) |page| {
             if (page) |p| m.allocator.destroy(p);
         }
         m.* = undefined;
     }
 
-    pub fn move(m: *Memory, offset: u32) void {
+    pub fn move(m: *PagedMemory, offset: u32) void {
         m.pos +%= offset;
     }
 
-    pub fn add(m: *Memory, value: u8, offset: u32) Allocator.Error!void {
+    pub fn add(m: *PagedMemory, value: u8, offset: u32) Allocator.Error!void {
         const pos = m.pos +% offset;
         const page = m.pages[pos / page_size] orelse page: {
             const page = try m.allocator.create(Page);
@@ -144,13 +189,13 @@ pub const Memory = struct {
         page[pos % page_size] +%= value;
     }
 
-    pub fn get(m: Memory, offset: u32) u8 {
+    pub fn get(m: PagedMemory, offset: u32) u8 {
         const pos = m.pos +% offset;
         const page = m.pages[pos / page_size] orelse return 0;
         return page[pos % page_size];
     }
 
-    pub fn set(m: *Memory, value: u8, offset: u32) Allocator.Error!void {
+    pub fn set(m: *PagedMemory, value: u8, offset: u32) Allocator.Error!void {
         const pos = m.pos +% offset;
         const page = m.pages[pos / page_size] orelse page: {
             const page = try m.allocator.create(Page);
