@@ -4,7 +4,9 @@ const Allocator = mem.Allocator;
 const Prog = @import("Prog.zig");
 const Inst = Prog.Inst;
 
-pub const passes: []const Pass = &.{ zeroLoops, offsetize, mulLoops, offsetize };
+const condense = @import("optimize/Condense.zig").pass;
+
+pub const passes: []const Pass = &.{ zeroLoops, condense, mulLoops, condense };
 
 pub const Pass = *const fn (Allocator, Prog) Allocator.Error!Prog;
 
@@ -164,84 +166,6 @@ pub fn mulLoops(allocator: Allocator, prog: Prog) Allocator.Error!Prog {
                 .offset = offsets[i],
                 .extra = extras[i],
             }),
-        }
-    }
-
-    return .{ .insts = insts.toOwnedSlice() };
-}
-
-/// Converts sequences of moves and offsetable instructions to offset
-/// instructions and at most one move.
-///
-/// For example, `++>++<<<++` can be optimized to
-///
-/// ```
-/// add 2
-/// add 2 @ 1
-/// add 2 @ -2
-/// move -2
-/// ```
-pub fn offsetize(allocator: Allocator, prog: Prog) Allocator.Error!Prog {
-    var insts: Inst.List = .{};
-    defer insts.deinit(allocator);
-    var pending_loop_starts: std.ArrayListUnmanaged(u32) = .{};
-    defer pending_loop_starts.deinit(allocator);
-
-    var current_offset: u32 = 0;
-    for (
-        prog.insts.items(.tag),
-        prog.insts.items(.value),
-        prog.insts.items(.offset),
-        prog.insts.items(.extra),
-    ) |tag, value, offset, extra| {
-        switch (tag) {
-            .set, .add, .add_mul, .in, .out => try insts.append(allocator, .{
-                .tag = tag,
-                .value = value,
-                .offset = offset +% current_offset,
-                .extra = extra,
-            }),
-            .move => current_offset +%= offset,
-            .halt, .loop_start, .loop_end => {
-                if (current_offset != 0) {
-                    try insts.append(allocator, .{
-                        .tag = .move,
-                        .value = undefined,
-                        .offset = current_offset,
-                        .extra = undefined,
-                    });
-                    current_offset = 0;
-                }
-                switch (tag) {
-                    .halt => try insts.append(allocator, .{
-                        .tag = .halt,
-                        .value = undefined,
-                        .offset = undefined,
-                        .extra = undefined,
-                    }),
-                    .loop_start => {
-                        try pending_loop_starts.append(allocator, @intCast(insts.len));
-                        try insts.append(allocator, .{
-                            .tag = .loop_start,
-                            .value = undefined,
-                            .offset = undefined,
-                            .extra = undefined,
-                        });
-                    },
-                    .loop_end => {
-                        const pos: u32 = @intCast(insts.len);
-                        const start = pending_loop_starts.pop();
-                        insts.items(.extra)[start] = pos - start;
-                        try insts.append(allocator, .{
-                            .tag = .loop_end,
-                            .value = undefined,
-                            .offset = undefined,
-                            .extra = start -% pos,
-                        });
-                    },
-                    else => unreachable,
-                }
-            },
         }
     }
 
