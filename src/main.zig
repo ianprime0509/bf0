@@ -8,8 +8,13 @@ const optimize = @import("optimize.zig");
 const usage =
     \\Usage: bf0 [options] [input]
     \\
+    \\Interprets the Brainfuck program provided as input. If no input file is
+    \\provided, the program is read from standard input.
+    \\
     \\Options:
-    \\  -e, --eof VALUE      Set cell value to VALUE on EOF (use 'no-change' for no change)
+    \\  -e, --eof=VALUE        Set VALUE on EOF (integer or 'no-change') (default: 0)
+    \\  -O, --optimize=LEVEL   Set optimization level (supported: 0-1) (default: 1)
+    \\  --dump-bytecode        Dump bytecode rather than executing the program
     \\
 ;
 
@@ -54,6 +59,8 @@ pub fn main() !void {
     var input: ?[]const u8 = null;
     defer if (input) |v| allocator.free(v);
     var options: interp.Options = .{};
+    var opt_options: optimize.Options = .{};
+    var dump_bytecode = false;
 
     var args: ArgIterator = .{ .args = try std.process.argsWithAllocator(allocator) };
     defer args.deinit();
@@ -72,8 +79,14 @@ pub fn main() !void {
                 } else |_| if (std.fmt.parseInt(i8, eof, 10)) |value| {
                     options.eof = .{ .value = @bitCast(value) };
                 } else |_| {
-                    fatal("invalid argument to --eof: {s}", .{eof});
+                    fatal("invalid value for --eof: {s}", .{eof});
                 }
+            } else if (option.is('O', "optimize")) {
+                const level_txt = args.optionValue() orelse fatal("expected value for -O, --optimize", .{});
+                const level = std.fmt.parseInt(u8, level_txt, 10) catch fatal("invalid value for -O, --optimize: {s}", .{level_txt});
+                opt_options.level = std.meta.intToEnum(optimize.Level, level) catch fatal("invalid value for -O, --optimize: {s}", .{level_txt});
+            } else if (option.is(null, "dump-bytecode")) {
+                dump_bytecode = true;
             } else {
                 fatal("unrecognized option: {}", .{option});
             },
@@ -97,17 +110,18 @@ pub fn main() !void {
 
     var prog = try Prog.parse(allocator, source);
     defer prog.deinit(allocator);
-    for (optimize.passes) |pass| {
-        const optimized_prog = try pass(allocator, prog);
-        prog.deinit(allocator);
-        prog = optimized_prog;
+    prog = try optimize.optimize(allocator, prog, opt_options);
+
+    if (dump_bytecode) {
+        var stdout_buf = std.io.bufferedWriter(std.io.getStdOut().writer());
+        try prog.dump(stdout_buf.writer());
+        try stdout_buf.flush();
+    } else {
+        var stdin_buf = std.io.bufferedReader(std.io.getStdIn().reader());
+        var int = try interp.interp(allocator, prog, stdin_buf.reader(), std.io.getStdOut().writer(), options);
+        defer int.deinit();
+        try int.run();
     }
-
-    var stdin_buf = std.io.bufferedReader(std.io.getStdIn().reader());
-    var int = try interp.interp(allocator, prog, stdin_buf.reader(), std.io.getStdOut().writer(), options);
-    defer int.deinit();
-
-    try int.run();
 }
 
 fn fatal(comptime format: []const u8, args: anytype) noreturn {

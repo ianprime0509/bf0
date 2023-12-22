@@ -97,57 +97,37 @@ fn processLoop(
     values: []const u8,
     offsets: []const u32,
 ) !bool {
-    const Op = union(enum) {
-        set: u8,
-        add: u8,
-    };
-    var ops: std.AutoArrayHashMapUnmanaged(u32, Op) = .{};
-    defer ops.deinit(o.allocator);
+    var incs: std.AutoArrayHashMapUnmanaged(u32, u8) = .{};
+    defer incs.deinit(o.allocator);
 
     for (tags, values, offsets) |tag, value, offset| {
         switch (tag) {
-            .halt, .add_mul, .move, .in, .out, .loop_start => return false,
+            .halt, .set, .add_mul, .move, .in, .out, .loop_start => return false,
             .loop_end => unreachable,
-            .set => try ops.put(o.allocator, offset, .{ .set = value }),
             .add => {
-                const gop = try ops.getOrPut(o.allocator, offset);
+                const gop = try incs.getOrPut(o.allocator, offset);
                 if (gop.found_existing) {
-                    gop.value_ptr.* = switch (gop.value_ptr.*) {
-                        .set => |v| .{ .set = v +% value },
-                        .add => |v| .{ .add = v +% value },
-                    };
+                    gop.value_ptr.* +%= value;
                 } else {
-                    gop.value_ptr.* = .{ .add = value };
+                    gop.value_ptr.* = value;
                 }
             },
         }
     }
 
-    const base_op = (ops.fetchSwapRemove(0) orelse return false).value;
-    const base_add = switch (base_op) {
-        .add => |v| v,
-        .set => return false,
-    };
+    const base_add = (incs.fetchSwapRemove(0) orelse return false).value;
     if (base_add == 1 or base_add == 255) {
         // If the base offset change is 1 or -1, then the loop can be optimized
         // to multiplications for other cells. For example, `[->++<]` sets the
         // cell at offset 1 to 2 times the cell at offset 0 (and sets the cell
         // at offset 0 to 0).
-        var op_entries = ops.iterator();
-        while (op_entries.next()) |entry| {
-            try o.insts.append(o.allocator, switch (entry.value_ptr.*) {
-                .set => |v| .{
-                    .tag = .set,
-                    .value = v,
-                    .offset = entry.key_ptr.*,
-                    .extra = undefined,
-                },
-                .add => |v| .{
-                    .tag = .add_mul,
-                    .value = -%base_add *% v,
-                    .offset = entry.key_ptr.*,
-                    .extra = -%entry.key_ptr.*,
-                },
+        var inc_entries = incs.iterator();
+        while (inc_entries.next()) |entry| {
+            try o.insts.append(o.allocator, .{
+                .tag = .add_mul,
+                .value = -%base_add *% entry.value_ptr.*,
+                .offset = entry.key_ptr.*,
+                .extra = -%entry.key_ptr.*,
             });
         }
         try o.insts.append(o.allocator, .{
@@ -157,7 +137,7 @@ fn processLoop(
             .extra = undefined,
         });
         return true;
-    } else if (base_add % 2 != 0 and ops.count() == 0) {
+    } else if (base_add % 2 != 0 and incs.count() == 0) {
         // Loops which do nothing but add an odd number at offset 0 will
         // eventually terminate, resulting in a `set 0`. Adding an even number
         // may not terminate, so the optimization cannot be applied in that

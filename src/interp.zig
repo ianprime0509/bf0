@@ -78,6 +78,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
         }
 
         pub fn step(int: *Self) RunError!bool {
+            //std.debug.print("{} {} {} {} {}\n", .{ int.pc, int.tags[int.pc], int.values[int.pc], int.offsets[int.pc], int.extras[int.pc] });
             switch (int.tags[int.pc]) {
                 .halt => return true,
                 .set => try int.memory.set(int.values[int.pc], int.offsets[int.pc]),

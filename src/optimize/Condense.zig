@@ -79,13 +79,18 @@ fn apply(o: *Condense, prog: Prog) !void {
             .set => try o.setValue(o.pending_move +% offset, value),
             .add => try o.addValue(o.pending_move +% offset, value),
             .add_mul => {
-                if (o.ops.get(o.pending_move +% offset +% extra)) |src| {
+                const dest_offset = o.pending_move +% offset;
+                const src_offset = dest_offset +% extra;
+                if (o.ops.get(src_offset)) |src| {
                     switch (src) {
-                        .known_value, .set => |v| try o.addValue(o.pending_move +% offset, value *% v),
+                        .known_value, .set => |v| try o.addValue(dest_offset, value *% v),
                         .add => {
                             // This dependency is too complex to express
-                            // effectively.
-                            try o.flushOps();
+                            // effectively. We need to flush both the source op
+                            // and any op at the destination, but other ops can
+                            // remain active.
+                            try o.flushOpAt(dest_offset);
+                            try o.flushOpAt(src_offset);
                             try o.insts.append(o.allocator, .{
                                 .tag = .add_mul,
                                 .value = value,
@@ -95,7 +100,10 @@ fn apply(o: *Condense, prog: Prog) !void {
                         },
                     }
                 } else {
-                    // No dependency on previous ops, so we don't need to flush.
+                    // There is no op at the source cell to flush, but we may
+                    // need to flush the destination cell op, since we have no
+                    // op for the add-mul operation.
+                    try o.flushOpAt(dest_offset);
                     try o.insts.append(o.allocator, .{
                         .tag = .add_mul,
                         .value = value,
@@ -118,9 +126,9 @@ fn apply(o: *Condense, prog: Prog) !void {
             },
             .out => {
                 if (o.ops.fetchSwapRemove(o.pending_move +% offset)) |entry| {
-                    try o.flushOp(o.pending_move +% offset, entry.value);
+                    try o.flushOp(entry.key, entry.value);
                     switch (entry.value) {
-                        .known_value, .set => |v| try o.ops.put(o.allocator, o.pending_move +% offset, .{
+                        .known_value, .set => |v| try o.ops.put(o.allocator, entry.key, .{
                             .known_value = v,
                         }),
                         .add => {},
@@ -137,7 +145,7 @@ fn apply(o: *Condense, prog: Prog) !void {
                 if (o.ops.get(o.pending_move)) |op| switch (op) {
                     .known_value, .set => |v| if (v == 0) {
                         // Eliminate the loop entirely as dead code.
-                        i +%= extra;
+                        i += extra;
                         continue;
                     },
                     .add => {},
@@ -205,13 +213,15 @@ fn addValue(o: *Condense, offset: u32, value: u8) !void {
 }
 
 fn flushPendingMove(o: *Condense) !void {
-    try o.insts.append(o.allocator, .{
-        .tag = .move,
-        .value = undefined,
-        .offset = undefined,
-        .extra = o.pending_move,
-    });
-    o.pending_move = 0;
+    if (o.pending_move != 0) {
+        try o.insts.append(o.allocator, .{
+            .tag = .move,
+            .value = undefined,
+            .offset = undefined,
+            .extra = o.pending_move,
+        });
+        o.pending_move = 0;
+    }
 }
 
 fn flushOp(o: *Condense, offset: u32, op: Op) !void {
@@ -229,6 +239,12 @@ fn flushOp(o: *Condense, offset: u32, op: Op) !void {
             .offset = offset,
             .extra = undefined,
         }),
+    }
+}
+
+fn flushOpAt(o: *Condense, offset: u32) !void {
+    if (o.ops.fetchSwapRemove(offset)) |entry| {
+        try o.flushOp(entry.key, entry.value);
     }
 }
 
