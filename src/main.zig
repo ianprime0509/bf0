@@ -13,7 +13,40 @@ const usage =
     \\
 ;
 
+var log_tty_config: std.io.tty.Config = undefined; // Will be initialized immediately in main
+
+pub const std_options = struct {
+    pub const logFn = logImpl;
+};
+
+pub fn logImpl(
+    comptime level: log.Level,
+    comptime scope: @Type(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const prefix = if (scope == .default)
+        comptime level.asText() ++ ": "
+    else
+        comptime level.asText() ++ "(" ++ @tagName(scope) ++ "): ";
+    const mutex = std.debug.getStderrMutex();
+    mutex.lock();
+    defer mutex.unlock();
+    const stderr = std.io.getStdErr().writer();
+    log_tty_config.setColor(stderr, switch (level) {
+        .err => .bright_red,
+        .warn => .bright_yellow,
+        .info => .bright_blue,
+        .debug => .bright_magenta,
+    }) catch return;
+    stderr.writeAll(prefix) catch return;
+    log_tty_config.setColor(stderr, .reset) catch return;
+    stderr.print(format ++ "\n", args) catch return;
+}
+
 pub fn main() !void {
+    log_tty_config = std.io.tty.detectConfig(std.io.getStdErr());
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
