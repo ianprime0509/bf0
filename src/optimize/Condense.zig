@@ -23,8 +23,7 @@
 //! which is one instruction shorter than the naive translation.
 
 const std = @import("std");
-const mem = std.mem;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const Prog = @import("../Prog.zig");
 const Inst = Prog.Inst;
 
@@ -105,6 +104,7 @@ fn apply(o: *Condense, prog: Prog) !void {
                     });
                 }
             },
+            .move => o.pending_move +%= extra,
             .in => {
                 // Any operation on the input cell is clobbered by the input
                 // instruction, so doesn't need to be flushed.
@@ -133,7 +133,6 @@ fn apply(o: *Condense, prog: Prog) !void {
                     .extra = extra,
                 });
             },
-            .move => o.pending_move +%= extra,
             .loop_start => {
                 if (o.ops.get(o.pending_move)) |op| switch (op) {
                     .known_value, .set => |v| if (v == 0) {
