@@ -133,7 +133,7 @@ fn apply(o: *Condense, prog: Prog) !void {
                     .extra = extra,
                 });
             },
-            .move => o.pending_move +%= offset,
+            .move => o.pending_move +%= extra,
             .loop_start => {
                 if (o.ops.get(o.pending_move)) |op| switch (op) {
                     .known_value, .set => |v| if (v == 0) {
@@ -209,8 +209,8 @@ fn flushPendingMove(o: *Condense) !void {
     try o.insts.append(o.allocator, .{
         .tag = .move,
         .value = undefined,
-        .offset = o.pending_move,
-        .extra = undefined,
+        .offset = undefined,
+        .extra = o.pending_move,
     });
     o.pending_move = 0;
 }

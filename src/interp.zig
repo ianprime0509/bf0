@@ -86,7 +86,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
                     const mul = int.values[int.pc] *% int.memory.get(int.offsets[int.pc] +% int.extras[int.pc]);
                     try int.memory.add(mul, int.offsets[int.pc]);
                 },
-                .move => int.memory.move(int.offsets[int.pc]),
+                .move => int.memory.move(int.extras[int.pc]),
                 .in => {
                     if (int.input.readByte()) |b| {
                         try int.memory.set(b, int.offsets[int.pc]);
@@ -136,8 +136,8 @@ pub const MappedMemory = struct {
         m.* = undefined;
     }
 
-    pub fn move(m: *MappedMemory, offset: u32) void {
-        m.pos +%= offset;
+    pub fn move(m: *MappedMemory, amount: u32) void {
+        m.pos +%= amount;
     }
 
     pub fn add(m: *MappedMemory, value: u8, offset: u32) error{}!void {
@@ -174,8 +174,8 @@ pub const PagedMemory = struct {
         m.* = undefined;
     }
 
-    pub fn move(m: *PagedMemory, offset: u32) void {
-        m.pos +%= offset;
+    pub fn move(m: *PagedMemory, amount: u32) void {
+        m.pos +%= amount;
     }
 
     pub fn add(m: *PagedMemory, value: u8, offset: u32) Allocator.Error!void {
