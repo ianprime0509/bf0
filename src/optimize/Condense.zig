@@ -76,6 +76,16 @@ fn apply(o: *Condense, prog: Prog) !void {
                 .offset = offset,
                 .extra = extra,
             }),
+            .breakpoint => {
+                try o.flushOps();
+                try o.flushPendingMove();
+                try o.insts.append(o.allocator, .{
+                    .tag = .breakpoint,
+                    .value = value,
+                    .offset = offset,
+                    .extra = extra,
+                });
+            },
             .set => try o.setValue(o.pending_move +% offset, value),
             .add => try o.addValue(o.pending_move +% offset, value),
             .add_mul => {

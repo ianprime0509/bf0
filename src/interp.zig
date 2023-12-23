@@ -69,17 +69,18 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
             int.* = undefined;
         }
 
-        pub const RunError = InputReader.Error || OutputWriter.Error || Allocator.Error;
+        pub const Status = enum {
+            halted,
+            running,
+            breakpoint,
+        };
 
-        pub fn run(int: *Self) RunError!void {
-            while (true) {
-                if (try int.step()) break;
-            }
-        }
+        pub const StepError = InputReader.Error || OutputWriter.Error || Allocator.Error;
 
-        pub fn step(int: *Self) RunError!bool {
+        pub fn step(int: *Self) StepError!Status {
             switch (int.tags[int.pc]) {
-                .halt => return true,
+                .halt => return .halted,
+                .breakpoint => return .breakpoint,
                 .set => try int.memory.set(int.values[int.pc], int.offsets[int.pc]),
                 .add => try int.memory.add(int.values[int.pc], int.offsets[int.pc]),
                 .add_mul => {
@@ -102,7 +103,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
                 .out => try int.output.writeByte(int.memory.get(int.offsets[int.pc])),
                 .loop_start => if (int.memory.get(0) == 0) {
                     int.pc += int.extras[int.pc] + 1;
-                    return false;
+                    return .running;
                 },
                 .loop_end => {
                     // There's no need to return to the loop-start instruction
@@ -113,11 +114,11 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
                     } else {
                         int.pc +%= int.extras[int.pc] + 1;
                     }
-                    return false;
+                    return .running;
                 },
             }
             int.pc += 1;
-            return false;
+            return .running;
         }
     };
 }

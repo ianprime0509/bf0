@@ -41,6 +41,7 @@ fn apply(o: *RecognizeLoops, prog: Prog) !void {
     while (i < prog.insts.len) : (i += 1) {
         switch (tags[i]) {
             .halt,
+            .breakpoint,
             .set,
             .add,
             .add_mul,
@@ -106,6 +107,7 @@ fn processMathLoop(
     for (tags, values, offsets) |tag, value, offset| {
         switch (tag) {
             .halt,
+            .breakpoint,
             .set,
             .add_mul,
             .move,
@@ -175,6 +177,7 @@ fn processMoveLoop(
     for (tags, extras) |tag, extra| {
         switch (tag) {
             .halt,
+            .breakpoint,
             .set,
             .add,
             .add_mul,

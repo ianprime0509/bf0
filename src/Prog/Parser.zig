@@ -48,6 +48,15 @@ pub fn parse(p: *Parser) error{ ParseError, OutOfMemory }!void {
             },
             '[' => try p.startLoop(),
             ']' => try p.endLoop(),
+            '#' => {
+                try p.flushOp();
+                try p.insts.append(p.allocator, .{
+                    .tag = .breakpoint,
+                    .value = undefined,
+                    .offset = undefined,
+                    .extra = undefined,
+                });
+            },
             else => {},
         }
     }

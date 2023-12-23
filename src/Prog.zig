@@ -17,6 +17,8 @@ pub const Inst = struct {
     pub const Tag = enum {
         /// Halts the program.
         halt,
+        /// Debugger breakpoint.
+        breakpoint,
         /// `mem[mp + offset] = value`
         set,
         /// `mem[mp + offset] += value`
@@ -65,6 +67,7 @@ pub fn dump(prog: Prog, writer: anytype) @TypeOf(writer).Error!void {
     ) |tag, value, offset, extra| {
         switch (tag) {
             .halt => try writer.writeAll("halt\n"),
+            .breakpoint => try writer.writeAll("breakpoint\n"),
             .set => try writer.print("set {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
             .add => try writer.print("add {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
             .add_mul => try writer.print("add-mul {}, {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(extra)), @as(i32, @bitCast(offset)) }),
