@@ -67,6 +67,7 @@ fn apply(o: *Condense, prog: Prog) !void {
         const value = values[i];
         const offset = offsets[i];
         const extra = extras[i];
+        const eff_offset = o.pending_move +% offset;
         switch (tag) {
             // Pending ops have no side effects, so they can be discarded when
             // the program halts.
@@ -86,59 +87,39 @@ fn apply(o: *Condense, prog: Prog) !void {
                     .extra = extra,
                 });
             },
-            .set => try o.setValue(o.pending_move +% offset, value),
-            .add => try o.addValue(o.pending_move +% offset, value),
+            .set => try o.setValue(eff_offset, value),
+            .add => try o.addValue(eff_offset, value),
             .add_mul => {
-                const dest_offset = o.pending_move +% offset;
-                const src_offset = dest_offset +% extra;
-                if (o.ops.get(src_offset)) |src| {
-                    switch (src) {
-                        .known_value, .set => |v| try o.addValue(dest_offset, value *% v),
-                        .add => {
-                            // This dependency is too complex to express
-                            // effectively. We need to flush both the source op
-                            // and any op at the destination, but other ops can
-                            // remain active.
-                            try o.flushOpAt(dest_offset);
-                            try o.flushOpAt(src_offset);
-                            try o.insts.append(o.allocator, .{
-                                .tag = .add_mul,
-                                .value = value,
-                                .offset = o.pending_move +% offset,
-                                .extra = extra,
-                            });
-                        },
-                    }
+                const src_offset = eff_offset +% extra;
+                if (o.getKnownValue(src_offset)) |src_value| {
+                    try o.addValue(eff_offset, value *% src_value);
                 } else {
-                    // There is no op at the source cell to flush, but we may
-                    // need to flush the destination cell op, since we have no
-                    // op for the add-mul operation.
-                    try o.flushOpAt(dest_offset);
+                    try o.flushOpAt(eff_offset);
+                    try o.flushOpAt(src_offset);
                     try o.insts.append(o.allocator, .{
                         .tag = .add_mul,
                         .value = value,
-                        .offset = o.pending_move +% offset,
+                        .offset = eff_offset,
                         .extra = extra,
                     });
                 }
             },
             .move => o.pending_move +%= extra,
             .seek => {
-                if (o.ops.get(o.pending_move +% offset)) |op| switch (op) {
-                    .known_value, .set => |v| if (v == value) {
+                if (o.getKnownValue(eff_offset)) |v| {
+                    if (v == value) {
                         // The seek can be skipped if we know we're already
                         // looking at the desired value. The pending move is
                         // still removed.
                         o.pending_move = 0;
                         continue;
-                    },
-                    .add => {},
-                };
+                    }
+                }
                 try o.flushOps();
                 try o.insts.append(o.allocator, .{
                     .tag = .seek,
                     .value = value,
-                    .offset = o.pending_move +% offset,
+                    .offset = eff_offset,
                     .extra = extra,
                 });
                 // The seek removes any pending move; the pending move prior to
@@ -148,40 +129,42 @@ fn apply(o: *Condense, prog: Prog) !void {
             .in => {
                 // Any operation on the input cell is clobbered by the input
                 // instruction, so doesn't need to be flushed.
-                _ = o.ops.swapRemove(o.pending_move +% offset);
+                o.clobberOpAt(eff_offset);
                 try o.insts.append(o.allocator, .{
                     .tag = .in,
                     .value = value,
-                    .offset = o.pending_move +% offset,
+                    .offset = eff_offset,
                     .extra = extra,
                 });
             },
             .out => {
-                if (o.ops.fetchSwapRemove(o.pending_move +% offset)) |entry| {
-                    try o.flushOp(entry.key, entry.value);
-                    switch (entry.value) {
-                        .known_value, .set => |v| try o.ops.put(o.allocator, entry.key, .{
-                            .known_value = v,
-                        }),
-                        .add => {},
-                    }
+                // Any pending op at the output cell needs to be flushed so the
+                // effects are visible to the output instruction, but the output
+                // instruction will not change the value of the cell, so any
+                // known value can be preserved after the flush.
+                const known_value = o.getKnownValue(eff_offset);
+                try o.flushOpAt(eff_offset);
+                if (known_value) |v| {
+                    try o.ops.put(o.allocator, eff_offset, .{
+                        .known_value = v,
+                    });
                 }
                 try o.insts.append(o.allocator, .{
                     .tag = .out,
                     .value = value,
-                    .offset = o.pending_move +% offset,
+                    .offset = eff_offset,
                     .extra = extra,
                 });
             },
             .loop_start => {
-                if (o.ops.get(o.pending_move)) |op| switch (op) {
-                    .known_value, .set => |v| if (v == 0) {
-                        // Eliminate the loop entirely as dead code.
+                if (o.getKnownValue(o.pending_move)) |v| {
+                    if (v == 0) {
+                        // This loop is dead code since the condition is known
+                        // to be false.
                         i += extra;
                         continue;
-                    },
-                    .add => {},
-                };
+                    }
+                }
                 try o.flushOps();
                 try o.flushPendingMove();
                 try o.startLoop();
@@ -220,6 +203,15 @@ fn endLoop(o: *Condense) !void {
     });
 }
 
+/// Returns the known value of `offset`, if any.
+fn getKnownValue(o: Condense, offset: u32) ?u8 {
+    return if (o.ops.get(offset)) |op| switch (op) {
+        .known_value, .set => |v| v,
+        .add => null,
+    } else null;
+}
+
+/// Adds or modifies an op to set the value of `offset` to `value`.
 fn setValue(o: *Condense, offset: u32, value: u8) !void {
     const gop = try o.ops.getOrPut(o.allocator, offset);
     // We do not need to emit a set instruction if the cell value is already
@@ -232,6 +224,7 @@ fn setValue(o: *Condense, offset: u32, value: u8) !void {
     }
 }
 
+/// Adds or modifies an op to add `value` to `offset`.
 fn addValue(o: *Condense, offset: u32, value: u8) !void {
     const gop = try o.ops.getOrPut(o.allocator, offset);
     if (gop.found_existing) {
@@ -244,6 +237,7 @@ fn addValue(o: *Condense, offset: u32, value: u8) !void {
     }
 }
 
+/// Flushes the effects of `pending_move` and resets it to 0.
 fn flushPendingMove(o: *Condense) !void {
     if (o.pending_move != 0) {
         try o.insts.append(o.allocator, .{
@@ -256,6 +250,12 @@ fn flushPendingMove(o: *Condense) !void {
     }
 }
 
+/// Clobbers (removes) the op at `offset`, without flushing it.
+fn clobberOpAt(o: *Condense, offset: u32) void {
+    _ = o.ops.swapRemove(offset);
+}
+
+/// Flushes the effects of `op`.
 fn flushOp(o: *Condense, offset: u32, op: Op) !void {
     switch (op) {
         .known_value => {},
@@ -274,12 +274,14 @@ fn flushOp(o: *Condense, offset: u32, op: Op) !void {
     }
 }
 
+/// Flushes and removes the op at `offset`.
 fn flushOpAt(o: *Condense, offset: u32) !void {
     if (o.ops.fetchSwapRemove(offset)) |entry| {
         try o.flushOp(entry.key, entry.value);
     }
 }
 
+/// Flushes and removes all ops.
 fn flushOps(o: *Condense) !void {
     var ops = o.ops.iterator();
     while (ops.next()) |entry| {
