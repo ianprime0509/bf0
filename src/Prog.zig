@@ -1,6 +1,5 @@
 const std = @import("std");
-const mem = std.mem;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const Parser = @import("Prog/Parser.zig");
 
 insts: Inst.List.Slice,

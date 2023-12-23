@@ -138,7 +138,7 @@ fn apply(o: *Condense, prog: Prog) !void {
             .in => {
                 // Any operation on the input cell is clobbered by the input
                 // instruction, so doesn't need to be flushed.
-                _ = o.ops.swapRemove(offset);
+                _ = o.ops.swapRemove(o.pending_move +% offset);
                 try o.insts.append(o.allocator, .{
                     .tag = .in,
                     .value = value,
