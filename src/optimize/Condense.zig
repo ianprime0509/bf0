@@ -21,6 +21,11 @@
 //! ```
 //!
 //! which is one instruction shorter than the naive translation.
+//!
+//! The optimization also keeps track of known values, including the known
+//! initial 0 values for unset cells, so that an `add 1` at the beginning of a
+//! program can be optimized to `set 1` (this also allows other constant-based
+//! optimizations such as removing "header comment" loops).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -30,6 +35,9 @@ const Inst = Prog.Inst;
 insts: Inst.List = .{},
 pending_loop_starts: std.ArrayListUnmanaged(u32) = .{},
 pending_move: u32 = 0,
+/// If non-null, any cells not described in `ops` and not present in this set
+/// can be assumed to be 0 (the initial value of every cell).
+start_clobbers: ?std.AutoHashMapUnmanaged(u32, void) = .{},
 ops: std.AutoArrayHashMapUnmanaged(u32, Op) = .{},
 allocator: Allocator,
 
@@ -51,6 +59,7 @@ pub fn pass(allocator: Allocator, prog: Prog) Allocator.Error!Prog {
 fn deinit(o: *Condense) void {
     o.insts.deinit(o.allocator);
     o.pending_loop_starts.deinit(o.allocator);
+    if (o.start_clobbers) |*m| m.deinit(o.allocator);
     o.ops.deinit(o.allocator);
     o.* = undefined;
 }
@@ -129,7 +138,7 @@ fn apply(o: *Condense, prog: Prog) !void {
             .in => {
                 // Any operation on the input cell is clobbered by the input
                 // instruction, so doesn't need to be flushed.
-                o.clobberOpAt(eff_offset);
+                try o.clobberOpAt(eff_offset);
                 try o.insts.append(o.allocator, .{
                     .tag = .in,
                     .value = value,
@@ -205,22 +214,27 @@ fn endLoop(o: *Condense) !void {
 
 /// Returns the known value of `offset`, if any.
 fn getKnownValue(o: Condense, offset: u32) ?u8 {
-    return if (o.ops.get(offset)) |op| switch (op) {
-        .known_value, .set => |v| v,
-        .add => null,
-    } else null;
+    if (o.ops.get(offset)) |op| {
+        return switch (op) {
+            .known_value, .set => |v| v,
+            .add => null,
+        };
+    } else if (o.start_clobbers) |start_clobbers| {
+        return if (start_clobbers.contains(offset)) null else 0;
+    } else {
+        return null;
+    }
 }
 
 /// Adds or modifies an op to set the value of `offset` to `value`.
 fn setValue(o: *Condense, offset: u32, value: u8) !void {
-    const gop = try o.ops.getOrPut(o.allocator, offset);
     // We do not need to emit a set instruction if the cell value is already
     // known to be `value`.
-    if (!gop.found_existing or
-        gop.value_ptr.* != .known_value or
-        gop.value_ptr.known_value != value)
-    {
-        gop.value_ptr.* = .{ .set = value };
+    if (o.getKnownValue(offset) != value) {
+        try o.ops.put(o.allocator, offset, .{ .set = value });
+        if (o.start_clobbers) |*start_clobbers| {
+            try start_clobbers.put(o.allocator, offset, {});
+        }
     }
 }
 
@@ -232,6 +246,13 @@ fn addValue(o: *Condense, offset: u32, value: u8) !void {
             .known_value, .set => |v| .{ .set = v +% value },
             .add => |v| .{ .add = v +% value },
         };
+    } else if (o.start_clobbers) |*start_clobbers| {
+        if (start_clobbers.contains(offset)) {
+            gop.value_ptr.* = .{ .add = value };
+        } else {
+            gop.value_ptr.* = .{ .set = value };
+            try start_clobbers.put(o.allocator, offset, {});
+        }
     } else {
         gop.value_ptr.* = .{ .add = value };
     }
@@ -251,12 +272,18 @@ fn flushPendingMove(o: *Condense) !void {
 }
 
 /// Clobbers (removes) the op at `offset`, without flushing it.
-fn clobberOpAt(o: *Condense, offset: u32) void {
+fn clobberOpAt(o: *Condense, offset: u32) !void {
     _ = o.ops.swapRemove(offset);
+    if (o.start_clobbers) |*start_clobbers| {
+        try start_clobbers.put(o.allocator, offset, {});
+    }
 }
 
 /// Flushes the effects of `op`.
 fn flushOp(o: *Condense, offset: u32, op: Op) !void {
+    if (o.start_clobbers) |*start_clobbers| {
+        try start_clobbers.put(o.allocator, offset, {});
+    }
     switch (op) {
         .known_value => {},
         .set => |value| try o.insts.append(o.allocator, .{
@@ -288,4 +315,8 @@ fn flushOps(o: *Condense) !void {
         try o.flushOp(entry.key_ptr.*, entry.value_ptr.*);
     }
     o.ops.clearRetainingCapacity();
+    if (o.start_clobbers) |*start_clobbers| {
+        start_clobbers.deinit(o.allocator);
+        o.start_clobbers = null;
+    }
 }
