@@ -78,7 +78,6 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
         }
 
         pub fn step(int: *Self) RunError!bool {
-            //std.debug.print("{} {} {} {} {}\n", .{ int.pc, int.tags[int.pc], int.values[int.pc], int.offsets[int.pc], int.extras[int.pc] });
             switch (int.tags[int.pc]) {
                 .halt => return true,
                 .set => try int.memory.set(int.values[int.pc], int.offsets[int.pc]),
@@ -88,6 +87,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
                     try int.memory.add(mul, int.offsets[int.pc]);
                 },
                 .move => int.memory.move(int.extras[int.pc]),
+                .seek => int.memory.seek(int.values[int.pc], int.offsets[int.pc], int.extras[int.pc]),
                 .in => {
                     if (int.input.readByte()) |b| {
                         try int.memory.set(b, int.offsets[int.pc]);
@@ -105,7 +105,14 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
                     return false;
                 },
                 .loop_end => {
-                    int.pc +%= int.extras[int.pc];
+                    // There's no need to return to the loop-start instruction
+                    // directly: we can perform its function as part of this
+                    // instruction as well.
+                    if (int.memory.get(0) == 0) {
+                        int.pc += 1;
+                    } else {
+                        int.pc +%= int.extras[int.pc] + 1;
+                    }
                     return false;
                 },
             }
@@ -139,6 +146,13 @@ pub const MappedMemory = struct {
 
     pub fn move(m: *MappedMemory, amount: u32) void {
         m.pos +%= amount;
+    }
+
+    pub fn seek(m: *MappedMemory, value: u8, offset: u32, step: u32) void {
+        m.pos +%= offset;
+        while (m.get(0) != value) {
+            m.pos +%= step;
+        }
     }
 
     pub fn add(m: *MappedMemory, value: u8, offset: u32) error{}!void {
@@ -177,6 +191,13 @@ pub const PagedMemory = struct {
 
     pub fn move(m: *PagedMemory, amount: u32) void {
         m.pos +%= amount;
+    }
+
+    pub fn seek(m: *PagedMemory, value: u8, offset: u32, step: u32) void {
+        m.pos +%= offset;
+        while (m.get(0) != value) {
+            m.pos +%= step;
+        }
     }
 
     pub fn add(m: *PagedMemory, value: u8, offset: u32) Allocator.Error!void {

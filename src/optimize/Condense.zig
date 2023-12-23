@@ -113,6 +113,28 @@ fn apply(o: *Condense, prog: Prog) !void {
                 }
             },
             .move => o.pending_move +%= extra,
+            .seek => {
+                if (o.ops.get(o.pending_move +% offset)) |op| switch (op) {
+                    .known_value, .set => |v| if (v == value) {
+                        // The seek can be skipped if we know we're already
+                        // looking at the desired value. The pending move is
+                        // still removed.
+                        o.pending_move = 0;
+                        continue;
+                    },
+                    .add => {},
+                };
+                try o.flushOps();
+                try o.insts.append(o.allocator, .{
+                    .tag = .seek,
+                    .value = value,
+                    .offset = o.pending_move +% offset,
+                    .extra = extra,
+                });
+                // The seek removes any pending move; the pending move prior to
+                // the seek is incorporated into the seek's offset.
+                o.pending_move = 0;
+            },
             .in => {
                 // Any operation on the input cell is clobbered by the input
                 // instruction, so doesn't need to be flushed.

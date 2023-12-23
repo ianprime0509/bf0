@@ -5,6 +5,7 @@
 //!
 //! - Multiplication: `[->++>+++<<]`
 //! - Set to 0: `[-]` (any odd increment)
+//! - Seek 0: `[>>>]` (move direction and step may differ)
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -46,6 +47,7 @@ fn apply(o: *RecognizeLoops, prog: Prog) !void {
             .in,
             .out,
             .move,
+            .seek,
             => try o.insts.append(o.allocator, .{
                 .tag = tags[i],
                 .value = values[i],
@@ -53,12 +55,13 @@ fn apply(o: *RecognizeLoops, prog: Prog) !void {
                 .extra = extras[i],
             }),
             .loop_start => {
-                const processed = try o.processLoop(
-                    tags[i + 1 .. i + extras[i]],
-                    values[i + 1 .. i + extras[i]],
-                    offsets[i + 1 .. i + extras[i]],
-                );
-                if (processed) {
+                const loop_tags = tags[i + 1 .. i + extras[i]];
+                const loop_values = values[i + 1 .. i + extras[i]];
+                const loop_offsets = offsets[i + 1 .. i + extras[i]];
+                const loop_extras = extras[i + 1 .. i + extras[i]];
+                if (try o.processMathLoop(loop_tags, loop_values, loop_offsets) or
+                    try o.processMoveLoop(loop_tags, loop_extras))
+                {
                     i += extras[i];
                 } else {
                     try o.startLoop();
@@ -91,7 +94,7 @@ fn endLoop(o: *RecognizeLoops) !void {
     });
 }
 
-fn processLoop(
+fn processMathLoop(
     o: *RecognizeLoops,
     tags: []const Inst.Tag,
     values: []const u8,
@@ -102,7 +105,15 @@ fn processLoop(
 
     for (tags, values, offsets) |tag, value, offset| {
         switch (tag) {
-            .halt, .set, .add_mul, .move, .in, .out, .loop_start => return false,
+            .halt,
+            .set,
+            .add_mul,
+            .move,
+            .seek,
+            .in,
+            .out,
+            .loop_start,
+            => return false,
             .loop_end => unreachable,
             .add => {
                 const gop = try incs.getOrPut(o.allocator, offset);
@@ -152,4 +163,36 @@ fn processLoop(
     } else {
         return false;
     }
+}
+
+fn processMoveLoop(
+    o: *RecognizeLoops,
+    tags: []const Inst.Tag,
+    extras: []const u32,
+) !bool {
+    var step: u32 = 0;
+
+    for (tags, extras) |tag, extra| {
+        switch (tag) {
+            .halt,
+            .set,
+            .add,
+            .add_mul,
+            .seek,
+            .in,
+            .out,
+            .loop_start,
+            .loop_end,
+            => return false,
+            .move => step +%= extra,
+        }
+    }
+
+    try o.insts.append(o.allocator, .{
+        .tag = .seek,
+        .value = 0,
+        .offset = 0,
+        .extra = step,
+    });
+    return true;
 }

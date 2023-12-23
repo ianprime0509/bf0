@@ -25,6 +25,9 @@ pub const Inst = struct {
         add_mul,
         /// `mp += extra`
         move,
+        /// Set `mp` to the first occurrence of `value` found by starting at
+        /// `offset` and moving in increments of `extra`.
+        seek,
         /// `mem[mp + offset] = in()`
         in,
         /// `out(mem[mp + offset])`
@@ -196,12 +199,13 @@ pub fn dump(prog: Prog, writer: anytype) @TypeOf(writer).Error!void {
             .halt => try writer.writeAll("halt\n"),
             .set => try writer.print("set {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
             .add => try writer.print("add {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
-            .add_mul => try writer.print("add-mul {} * {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(extra)), @as(i32, @bitCast(offset)) }),
+            .add_mul => try writer.print("add-mul {}, {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(extra)), @as(i32, @bitCast(offset)) }),
             .move => try writer.print("move {}\n", .{@as(i32, @bitCast(extra))}),
+            .seek => try writer.print("seek {}, {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(extra)), @as(i32, @bitCast(offset)) }),
             .in => try writer.print("in @ {}\n", .{@as(i32, @bitCast(offset))}),
             .out => try writer.print("out @ {}\n", .{@as(i32, @bitCast(offset))}),
-            .loop_start => try writer.print("loop-start -> {}\n", .{extra}),
-            .loop_end => try writer.print("loop-end -> -{} \n", .{-%extra}),
+            .loop_start => try writer.print("loop-start # -> {}\n", .{extra}),
+            .loop_end => try writer.print("loop-end # -> -{}\n", .{-%extra}),
         }
     }
 }
