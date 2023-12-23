@@ -1,5 +1,6 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
+const mem = std.mem;
+const Allocator = mem.Allocator;
 const Parser = @import("Prog/Parser.zig");
 
 insts: Inst.List.Slice,
@@ -56,6 +57,26 @@ pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfM
     defer p.deinit();
     try p.parse();
     return .{ .insts = p.insts.toOwnedSlice() };
+}
+
+const Hash = std.crypto.hash.Md5;
+
+pub fn hash(prog: Prog) [Hash.digest_length]u8 {
+    var h = Hash.init(.{});
+    for (
+        prog.insts.items(.tag),
+        prog.insts.items(.value),
+        prog.insts.items(.offset),
+        prog.insts.items(.extra),
+    ) |tag, value, offset, extra| {
+        h.update(mem.asBytes(&tag));
+        h.update(mem.asBytes(&value));
+        h.update(mem.asBytes(&offset));
+        h.update(mem.asBytes(&extra));
+    }
+    var out: [Hash.digest_length]u8 = undefined;
+    h.final(&out);
+    return out;
 }
 
 pub fn dump(prog: Prog, writer: anytype) @TypeOf(writer).Error!void {

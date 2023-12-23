@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const mem = std.mem;
 const log = std.log;
 const Prog = @import("Prog.zig");
@@ -21,6 +22,7 @@ const usage =
 var log_tty_config: std.io.tty.Config = undefined; // Will be initialized immediately in main
 
 pub const std_options = struct {
+    pub const log_level = if (builtin.mode == .Debug) log.Level.debug else log.Level.info;
     pub const logFn = logImpl;
 };
 
