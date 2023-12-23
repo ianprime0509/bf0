@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
+const Parser = @import("Prog/Parser.zig");
 
 insts: Inst.List.Slice,
 
@@ -50,142 +51,10 @@ pub fn deinit(prog: *Prog, allocator: Allocator) void {
 }
 
 pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfMemory }!Prog {
-    var insts: std.MultiArrayList(Inst) = .{};
-    defer insts.deinit(allocator);
-    var pending_loop_starts: std.ArrayListUnmanaged(u32) = .{};
-    defer pending_loop_starts.deinit(allocator);
-    var current_op: union(enum) {
-        none,
-        add: u8,
-        move: u32,
-    } = .none;
-    for (source) |c| {
-        switch (c) {
-            '+', '-' => {
-                const inc: u8 = if (c == '+') 1 else @bitCast(@as(i8, -1));
-                switch (current_op) {
-                    .none => current_op = .{ .add = inc },
-                    .add => |*value| value.* +%= inc,
-                    .move => |amount| {
-                        try insts.append(allocator, .{
-                            .tag = .move,
-                            .value = undefined,
-                            .offset = undefined,
-                            .extra = amount,
-                        });
-                        current_op = .{ .add = inc };
-                    },
-                }
-            },
-            '>', '<' => {
-                const inc: u32 = if (c == '>') 1 else @bitCast(@as(i32, -1));
-                switch (current_op) {
-                    .none => current_op = .{ .move = inc },
-                    .add => |value| {
-                        try insts.append(allocator, .{
-                            .tag = .add,
-                            .value = value,
-                            .offset = 0,
-                            .extra = undefined,
-                        });
-                        current_op = .{ .move = inc };
-                    },
-                    .move => |*amount| amount.* +%= inc,
-                }
-            },
-            ',', '.', '[', ']' => {
-                switch (current_op) {
-                    .none => {},
-                    .add => |value| {
-                        try insts.append(allocator, .{
-                            .tag = .add,
-                            .value = value,
-                            .offset = 0,
-                            .extra = undefined,
-                        });
-                        current_op = .none;
-                    },
-                    .move => |amount| {
-                        try insts.append(allocator, .{
-                            .tag = .move,
-                            .value = undefined,
-                            .offset = undefined,
-                            .extra = amount,
-                        });
-                    },
-                }
-                current_op = .none;
-                switch (c) {
-                    ',' => try insts.append(allocator, .{
-                        .tag = .in,
-                        .value = undefined,
-                        .offset = 0,
-                        .extra = undefined,
-                    }),
-                    '.' => try insts.append(allocator, .{
-                        .tag = .out,
-                        .value = undefined,
-                        .offset = 0,
-                        .extra = undefined,
-                    }),
-                    '[' => {
-                        const index: u32 = @intCast(insts.len);
-                        try insts.append(allocator, .{
-                            .tag = .loop_start,
-                            .value = undefined,
-                            .offset = undefined,
-                            .extra = undefined,
-                        });
-                        try pending_loop_starts.append(allocator, index);
-                    },
-                    ']' => {
-                        const loop_start = pending_loop_starts.popOrNull() orelse return error.ParseError;
-                        const index: u32 = @intCast(insts.len);
-                        insts.items(.extra)[loop_start] = index - loop_start;
-                        try insts.append(allocator, .{
-                            .tag = .loop_end,
-                            .value = undefined,
-                            .offset = undefined,
-                            .extra = loop_start -% index,
-                        });
-                    },
-                    else => unreachable,
-                }
-            },
-            else => {},
-        }
-    }
-
-    switch (current_op) {
-        .none => {},
-        .add => |value| {
-            try insts.append(allocator, .{
-                .tag = .add,
-                .value = value,
-                .offset = 0,
-                .extra = undefined,
-            });
-            current_op = .none;
-        },
-        .move => |amount| {
-            try insts.append(allocator, .{
-                .tag = .move,
-                .value = undefined,
-                .offset = undefined,
-                .extra = amount,
-            });
-        },
-    }
-    try insts.append(allocator, .{
-        .tag = .halt,
-        .value = undefined,
-        .offset = undefined,
-        .extra = undefined,
-    });
-
-    return .{
-        .insts = insts.toOwnedSlice(),
-    };
+    var p: Parser = .{ .source = source, .allocator = allocator };
+    defer p.deinit();
+    try p.parse();
+    return .{ .insts = p.insts.toOwnedSlice() };
 }
 
 pub fn dump(prog: Prog, writer: anytype) @TypeOf(writer).Error!void {
