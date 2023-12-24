@@ -113,7 +113,11 @@ pub const MappedMemory = struct {
     pub const InitError = Allocator.Error;
     pub const WriteError = error{};
 
-    pub const supported = builtin.os.tag == .linux;
+    pub const supported =
+        // Only Linux is confirmed to work (needs MAP_NORESERVE)
+        builtin.os.tag == .linux and
+        // 32-bit architectures won't be able to map an entire 4GB page in memory
+        @sizeOf(usize) >= 8;
 
     pub fn init(_: Allocator) InitError!MappedMemory {
         return .{
