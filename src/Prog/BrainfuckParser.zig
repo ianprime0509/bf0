@@ -4,7 +4,7 @@ const Prog = @import("../Prog.zig");
 const Inst = Prog.Inst;
 
 source: []const u8,
-insts: std.MultiArrayList(Inst) = .{},
+insts: Inst.List = .{},
 pending_loop_starts: std.ArrayListUnmanaged(u32) = .{},
 current_op: union(enum) {
     none,

@@ -16,6 +16,7 @@ const usage =
     \\  -e, --eof=VALUE        Set VALUE on EOF (integer or 'no-change') (default: 0)
     \\  -O, --optimize=LEVEL   Set optimization level (supported: 0-1) (default: 1)
     \\  --dump-bytecode        Dump bytecode rather than executing the program
+    \\  --input-format=FORMAT  Read input using FORMAT ('brainfuck' or 'bytecode-text') (default: brainfuck)
     \\
 ;
 
@@ -63,6 +64,7 @@ pub fn main() !void {
     var options: interp.Options = .{};
     var opt_options: optimize.Options = .{};
     var dump_bytecode = false;
+    var input_format: enum { brainfuck, bytecode_text } = .brainfuck;
 
     var args: ArgIterator = .{ .args = try std.process.argsWithAllocator(allocator) };
     defer args.deinit();
@@ -89,6 +91,14 @@ pub fn main() !void {
                 opt_options.level = std.meta.intToEnum(optimize.Level, level) catch fatal("invalid value for -O, --optimize: {s}", .{level_txt});
             } else if (option.is(null, "dump-bytecode")) {
                 dump_bytecode = true;
+            } else if (option.is(null, "input-format")) {
+                const format = args.optionValue() orelse fatal("expected value for --input-format", .{});
+                input_format = if (mem.eql(u8, format, "brainfuck"))
+                    .brainfuck
+                else if (mem.eql(u8, format, "bytecode-text"))
+                    .bytecode_text
+                else
+                    fatal("invalid value for --input-format: {s}", .{format});
             } else {
                 fatal("unrecognized option: {}", .{option});
             },
@@ -110,13 +120,16 @@ pub fn main() !void {
         try std.io.getStdIn().readToEndAlloc(allocator, std.math.maxInt(u32));
     defer allocator.free(source);
 
-    var prog = try Prog.parse(allocator, source);
+    var prog = switch (input_format) {
+        .brainfuck => try Prog.parseBrainfuck(allocator, source),
+        .bytecode_text => try Prog.parseBytecodeText(allocator, source),
+    };
     defer prog.deinit(allocator);
     prog = try optimize.optimize(allocator, prog, opt_options);
 
     if (dump_bytecode) {
         var stdout_buf = std.io.bufferedWriter(std.io.getStdOut().writer());
-        try prog.dump(stdout_buf.writer());
+        try prog.writeBytecodeText(stdout_buf.writer(), .{ .show_internal = true });
         try stdout_buf.flush();
     } else {
         var stdin_buf = std.io.bufferedReader(std.io.getStdIn().reader());
@@ -235,3 +248,7 @@ const ArgIterator = struct {
         }
     }
 };
+
+test {
+    std.testing.refAllDecls(@This());
+}

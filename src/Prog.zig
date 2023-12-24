@@ -1,7 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const Parser = @import("Prog/Parser.zig");
+const BrainfuckParser = @import("Prog/BrainfuckParser.zig");
+const BytecodeTextParser = @import("Prog/BytecodeTextParser.zig");
 
 insts: Inst.List.Slice,
 
@@ -45,6 +46,35 @@ pub const Inst = struct {
         /// Guaranteed to be balanced with `loop_start`.
         loop_end,
     };
+
+    pub const Meta = struct {
+        name: []const u8,
+        value: ArgUsage,
+        offset: ArgUsage,
+        extra: ArgUsage,
+
+        pub const ArgUsage = enum {
+            unused,
+            used,
+            internal_only,
+        };
+    };
+
+    pub const meta = meta: {
+        var m = std.EnumArray(Tag, Meta).initUndefined();
+        m.set(.halt, .{ .name = "halt", .value = .unused, .offset = .unused, .extra = .unused });
+        m.set(.breakpoint, .{ .name = "breakpoint", .value = .unused, .offset = .unused, .extra = .unused });
+        m.set(.set, .{ .name = "set", .value = .used, .offset = .used, .extra = .unused });
+        m.set(.add, .{ .name = "add", .value = .used, .offset = .used, .extra = .unused });
+        m.set(.add_mul, .{ .name = "add-mul", .value = .used, .offset = .used, .extra = .used });
+        m.set(.move, .{ .name = "move", .value = .unused, .offset = .unused, .extra = .used });
+        m.set(.seek, .{ .name = "seek", .value = .used, .offset = .used, .extra = .used });
+        m.set(.in, .{ .name = "in", .value = .unused, .offset = .used, .extra = .unused });
+        m.set(.out, .{ .name = "out", .value = .unused, .offset = .used, .extra = .unused });
+        m.set(.loop_start, .{ .name = "loop-start", .value = .unused, .offset = .unused, .extra = .internal_only });
+        m.set(.loop_end, .{ .name = "loop-end", .value = .unused, .offset = .unused, .extra = .internal_only });
+        break :meta m;
+    };
 };
 
 pub fn deinit(prog: *Prog, allocator: Allocator) void {
@@ -52,8 +82,15 @@ pub fn deinit(prog: *Prog, allocator: Allocator) void {
     prog.* = undefined;
 }
 
-pub fn parse(allocator: Allocator, source: []const u8) error{ ParseError, OutOfMemory }!Prog {
-    var p: Parser = .{ .source = source, .allocator = allocator };
+pub fn parseBrainfuck(allocator: Allocator, source: []const u8) error{ ParseError, OutOfMemory }!Prog {
+    var p: BrainfuckParser = .{ .source = source, .allocator = allocator };
+    defer p.deinit();
+    try p.parse();
+    return .{ .insts = p.insts.toOwnedSlice() };
+}
+
+pub fn parseBytecodeText(allocator: Allocator, source: []const u8) error{ ParseError, OutOfMemory }!Prog {
+    var p: BytecodeTextParser = .{ .source = source, .allocator = allocator };
     defer p.deinit();
     try p.parse();
     return .{ .insts = p.insts.toOwnedSlice() };
@@ -79,25 +116,39 @@ pub fn hash(prog: Prog) [Hash.digest_length]u8 {
     return out;
 }
 
-pub fn dump(prog: Prog, writer: anytype) @TypeOf(writer).Error!void {
+pub const BytecodeTextStyle = struct {
+    /// The number of spaces to use to indent loop bodies.
+    indent: usize = 2,
+    /// Whether to write out internal_only arguments as comments.
+    show_internal: bool = false,
+};
+
+pub fn writeBytecodeText(prog: Prog, writer: anytype, style: BytecodeTextStyle) @TypeOf(writer).Error!void {
+    var indent: usize = 0;
     for (
         prog.insts.items(.tag),
         prog.insts.items(.value),
         prog.insts.items(.offset),
         prog.insts.items(.extra),
     ) |tag, value, offset, extra| {
-        switch (tag) {
-            .halt => try writer.writeAll("halt\n"),
-            .breakpoint => try writer.writeAll("breakpoint\n"),
-            .set => try writer.print("set {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
-            .add => try writer.print("add {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(offset)) }),
-            .add_mul => try writer.print("add-mul {}, {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(extra)), @as(i32, @bitCast(offset)) }),
-            .move => try writer.print("move {}\n", .{@as(i32, @bitCast(extra))}),
-            .seek => try writer.print("seek {}, {} @ {}\n", .{ @as(i8, @bitCast(value)), @as(i32, @bitCast(extra)), @as(i32, @bitCast(offset)) }),
-            .in => try writer.print("in @ {}\n", .{@as(i32, @bitCast(offset))}),
-            .out => try writer.print("out @ {}\n", .{@as(i32, @bitCast(offset))}),
-            .loop_start => try writer.print("loop-start # -> {}\n", .{extra}),
-            .loop_end => try writer.print("loop-end # -> -{}\n", .{-%extra}),
+        if (tag == .loop_end) indent -= style.indent;
+        const meta = Inst.meta.get(tag);
+        try writer.writeByteNTimes(' ', indent);
+        try writer.writeAll(meta.name);
+        if (meta.value == .used) {
+            try writer.print(" {}", .{@as(i8, @bitCast(value))});
         }
+        if (meta.extra == .used) {
+            if (meta.value == .used) try writer.writeByte(',');
+            try writer.print(" {}", .{@as(i32, @bitCast(extra))});
+        }
+        if (meta.offset == .used and offset != 0) {
+            try writer.print(" @ {}", .{@as(i32, @bitCast(offset))});
+        }
+        if (style.show_internal and meta.extra == .internal_only) {
+            try writer.print(" # {}", .{@as(i32, @bitCast(extra))});
+        }
+        try writer.writeByte('\n');
+        if (tag == .loop_start) indent += style.indent;
     }
 }

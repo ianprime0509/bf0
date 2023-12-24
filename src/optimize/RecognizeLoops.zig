@@ -11,6 +11,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Prog = @import("../Prog.zig");
 const Inst = Prog.Inst;
+const testOptimize = @import("testing.zig").testOptimize;
 
 insts: Inst.List = .{},
 pending_loop_starts: std.ArrayListUnmanaged(u32) = .{},
@@ -198,4 +199,58 @@ fn processMoveLoop(
         .extra = step,
     });
     return true;
+}
+
+test "multiplication" {
+    try testOptimize(pass,
+        \\loop-start
+        \\  add -1
+        \\  add 2 @ 1
+        \\  add -3 @ 2
+        \\loop-end
+    ,
+        \\add-mul -3, -2 @ 2
+        \\add-mul 2, -1 @ 1
+        \\set 0
+    );
+}
+
+test "set 0" {
+    try testOptimize(pass,
+        \\loop-start
+        \\  add -1
+        \\loop-end
+        \\loop-start
+        \\  add 1
+        \\loop-end
+        \\loop-start
+        \\  add 3
+        \\loop-end
+        \\loop-start
+        \\  add -11
+        \\loop-end
+    ,
+        \\set 0
+        \\set 0
+        \\set 0
+        \\set 0
+    );
+}
+
+test "seek 0" {
+    try testOptimize(pass,
+        \\loop-start
+        \\  move 1
+        \\loop-end
+        \\loop-start
+        \\  move -1
+        \\loop-end
+        \\loop-start
+        \\  move 5
+        \\loop-end
+    ,
+        \\seek 0, 1
+        \\seek 0, -1
+        \\seek 0, 5
+    );
 }

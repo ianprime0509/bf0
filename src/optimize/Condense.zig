@@ -31,6 +31,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Prog = @import("../Prog.zig");
 const Inst = Prog.Inst;
+const testOptimize = @import("testing.zig").testOptimize;
 
 insts: Inst.List = .{},
 pending_loop_starts: std.ArrayListUnmanaged(u32) = .{},
@@ -319,4 +320,98 @@ fn flushOps(o: *Condense) !void {
         start_clobbers.deinit(o.allocator);
         o.start_clobbers = null;
     }
+}
+
+// Note: in many of the tests below, the breakpoint instruction is used as an
+// optimization barrier (e.g. to ensure cell mutations are not optimized away).
+
+test "coalesce arithmetic" {
+    try testOptimize(pass,
+        \\breakpoint
+        \\add 1
+        \\add 2
+        \\add 3
+        \\set 5 @ 1
+        \\add 10 @ 1
+        \\add 4
+        \\set 0 @ 2
+        \\set 5 @ 3
+        \\add-mul 6, 1 @ 2
+        \\breakpoint
+    ,
+        \\breakpoint
+        \\add 10
+        \\set 15 @ 1
+        \\set 30 @ 2
+        \\set 5 @ 3
+        \\breakpoint
+    );
+}
+
+test "coalesce moves" {
+    try testOptimize(pass,
+        \\breakpoint
+        \\add 1
+        \\move 1
+        \\add 2
+        \\move 4
+        \\add 3
+        \\move -5
+        \\add 4
+        \\move 2
+        \\out
+        \\in
+        \\breakpoint
+    ,
+        \\breakpoint
+        \\out @ 2
+        \\in @ 2
+        \\add 5
+        \\add 2 @ 1
+        \\add 3 @ 5
+        \\move 2
+        \\breakpoint
+    );
+}
+
+test "initial cells known to be 0" {
+    try testOptimize(pass,
+        \\add 2
+        \\add-mul 5, -1 @ 1
+        \\add 3 @ 2
+        \\add-mul 10, -2 @ 2
+        \\in @ 3
+        \\add 5 @ 4
+        \\add-mul 10, -1 @ 1
+        \\out @ 4
+        \\add 5 @ 4
+        \\breakpoint
+    ,
+        \\in @ 3
+        \\set 5 @ 4
+        \\out @ 4
+        \\set 2
+        \\set 30 @ 1
+        \\set 23 @ 2
+        \\set 10 @ 4
+        \\breakpoint
+    );
+}
+
+test "useless add/set optimized out" {
+    try testOptimize(pass,
+        \\breakpoint
+        \\add 5
+        \\add 6 @ 1
+        \\add 7 @ 2
+        \\out
+        \\set 100
+        \\add 6 @ 1
+        \\halt
+    ,
+        \\breakpoint
+        \\add 5
+        \\out
+        \\halt
+    );
 }
