@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const Prog = @import("Prog.zig");
@@ -12,24 +13,6 @@ pub const Options = struct {
         value: u8,
     };
 };
-
-pub fn interp(
-    allocator: Allocator,
-    prog: Prog,
-    reader: anytype,
-    writer: anytype,
-    options: Options,
-) Allocator.Error!Interp(@TypeOf(reader), @TypeOf(writer), MappedMemory) {
-    // TODO: make memory type configurable
-    // TODO: refine errors induced by memory type
-    return Interp(@TypeOf(reader), @TypeOf(writer), MappedMemory).init(
-        allocator,
-        prog,
-        reader,
-        writer,
-        options,
-    );
-}
 
 pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime Memory: type) type {
     return struct {
@@ -127,7 +110,12 @@ pub const MappedMemory = struct {
     pos: u32 = 0,
     memory: []align(mem.page_size) u8,
 
-    pub fn init(_: Allocator) Allocator.Error!MappedMemory {
+    pub const InitError = Allocator.Error;
+    pub const WriteError = error{};
+
+    pub const supported = builtin.os.tag == .linux;
+
+    pub fn init(_: Allocator) InitError!MappedMemory {
         return .{
             .memory = std.os.mmap(
                 null,
@@ -156,7 +144,7 @@ pub const MappedMemory = struct {
         }
     }
 
-    pub fn add(m: *MappedMemory, value: u8, offset: u32) error{}!void {
+    pub fn add(m: *MappedMemory, value: u8, offset: u32) WriteError!void {
         m.memory[m.pos +% offset] +%= value;
     }
 
@@ -164,7 +152,7 @@ pub const MappedMemory = struct {
         return m.memory[m.pos +% offset];
     }
 
-    pub fn set(m: *MappedMemory, value: u8, offset: u32) error{}!void {
+    pub fn set(m: *MappedMemory, value: u8, offset: u32) WriteError!void {
         m.memory[m.pos +% offset] = value;
     }
 };
@@ -178,6 +166,9 @@ pub const PagedMemory = struct {
     const n_pages = (1 << 32) / page_size;
 
     const Page = [page_size]u8;
+
+    pub const InitError = error{};
+    pub const WriteError = Allocator.Error;
 
     pub fn init(allocator: Allocator) error{}!PagedMemory {
         return .{ .allocator = allocator };

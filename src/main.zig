@@ -1,22 +1,24 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const mem = std.mem;
+const Allocator = mem.Allocator;
 const log = std.log;
 const Prog = @import("Prog.zig");
 const interp = @import("interp.zig");
 const optimize = @import("optimize.zig");
 
 const usage =
-    \\Usage: bf0 [options] [input]
+    \\Usage: bf0 [options] [source]
     \\
     \\Interprets the Brainfuck program provided as input. If no input file is
     \\provided, the program is read from standard input.
     \\
     \\Options:
-    \\  -e, --eof=VALUE        Set VALUE on EOF (integer or 'no-change') (default: 0)
-    \\  -O, --optimize=LEVEL   Set optimization level (supported: 0-1) (default: 1)
-    \\  --dump-bytecode        Dump bytecode rather than executing the program
-    \\  --input-format=FORMAT  Read input using FORMAT ('brainfuck' or 'bytecode-text') (default: brainfuck)
+    \\  -e, --eof=VALUE         Set VALUE on EOF (integer or 'no-change') (default: 0)
+    \\  -m, --memory=TYPE       Set memory type ('paged' or 'mapped') (default: platform-specific)
+    \\  -O, --optimize=LEVEL    Set optimization level (supported: 0-1) (default: 1)
+    \\  --dump-bytecode         Dump bytecode rather than executing the program
+    \\  --source-format=FORMAT  Read input using FORMAT ('brainfuck' or 'bytecode-text') (default: brainfuck)
     \\
 ;
 
@@ -59,12 +61,13 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var input: ?[]const u8 = null;
-    defer if (input) |v| allocator.free(v);
+    var source_path: ?[]const u8 = null;
+    defer if (source_path) |v| allocator.free(v);
     var options: interp.Options = .{};
     var opt_options: optimize.Options = .{};
     var dump_bytecode = false;
-    var input_format: enum { brainfuck, bytecode_text } = .brainfuck;
+    var source_format: enum { brainfuck, bytecode_text } = .brainfuck;
+    var memory_type: enum { paged, mapped } = if (interp.MappedMemory.supported) .mapped else .paged;
 
     var args: ArgIterator = .{ .args = try std.process.argsWithAllocator(allocator) };
     defer args.deinit();
@@ -85,27 +88,35 @@ pub fn main() !void {
                 } else |_| {
                     fatal("invalid value for --eof: {s}", .{eof});
                 }
+            } else if (option.is('m', "memory")) {
+                const memory = args.optionValue() orelse fatal("expected value for -m, --memory", .{});
+                memory_type = if (mem.eql(u8, memory, "paged"))
+                    .paged
+                else if (mem.eql(u8, memory, "mapped"))
+                    .mapped
+                else
+                    fatal("invalid value for -m, --mapped: {s}", .{memory});
             } else if (option.is('O', "optimize")) {
                 const level_txt = args.optionValue() orelse fatal("expected value for -O, --optimize", .{});
                 const level = std.fmt.parseInt(u8, level_txt, 10) catch fatal("invalid value for -O, --optimize: {s}", .{level_txt});
                 opt_options.level = std.meta.intToEnum(optimize.Level, level) catch fatal("invalid value for -O, --optimize: {s}", .{level_txt});
             } else if (option.is(null, "dump-bytecode")) {
                 dump_bytecode = true;
-            } else if (option.is(null, "input-format")) {
-                const format = args.optionValue() orelse fatal("expected value for --input-format", .{});
-                input_format = if (mem.eql(u8, format, "brainfuck"))
+            } else if (option.is(null, "source-format")) {
+                const format = args.optionValue() orelse fatal("expected value for --source-format", .{});
+                source_format = if (mem.eql(u8, format, "brainfuck"))
                     .brainfuck
                 else if (mem.eql(u8, format, "bytecode-text"))
                     .bytecode_text
                 else
-                    fatal("invalid value for --input-format: {s}", .{format});
+                    fatal("invalid value for --source-format: {s}", .{format});
             } else {
                 fatal("unrecognized option: {}", .{option});
             },
-            .param => |param| if (input != null) {
-                fatal("too many input files", .{});
+            .param => |param| if (source_path != null) {
+                fatal("too many source files", .{});
             } else {
-                input = try allocator.dupe(u8, param);
+                source_path = try allocator.dupe(u8, param);
             },
             .unexpected_value => |unexpected_value| fatal("unexpected value to --{s}: {s}", .{
                 unexpected_value.option,
@@ -114,13 +125,13 @@ pub fn main() !void {
         }
     }
 
-    const source = if (input) |input_path|
-        try std.fs.cwd().readFileAlloc(allocator, input_path, std.math.maxInt(u32))
+    const source = if (source_path) |path|
+        try std.fs.cwd().readFileAlloc(allocator, path, std.math.maxInt(u32))
     else
         try std.io.getStdIn().readToEndAlloc(allocator, std.math.maxInt(u32));
     defer allocator.free(source);
 
-    var prog = switch (input_format) {
+    var prog = switch (source_format) {
         .brainfuck => try Prog.parseBrainfuck(allocator, source),
         .bytecode_text => try Prog.parseBytecodeText(allocator, source),
     };
@@ -133,14 +144,35 @@ pub fn main() !void {
         try stdout_buf.flush();
     } else {
         var stdin_buf = std.io.bufferedReader(std.io.getStdIn().reader());
-        var int = try interp.interp(allocator, prog, stdin_buf.reader(), std.io.getStdOut().writer(), options);
-        defer int.deinit();
-        while (int.step()) |status| switch (status) {
-            .halted => break,
-            .breakpoint => int.pc += 1, // TODO: debugger
-            .running => {},
-        } else |err| return err;
+        const input = stdin_buf.reader();
+        // We can't buffer output in general, since some programs expect to have
+        // output visible immediately.
+        const output = std.io.getStdOut().writer();
+        switch (memory_type) {
+            .paged => try run(allocator, prog, input, output, options, interp.PagedMemory),
+            .mapped => if (interp.MappedMemory.supported)
+                try run(allocator, prog, input, output, options, interp.MappedMemory)
+            else
+                fatal("mapped memory not supported", .{}),
+        }
     }
+}
+
+fn run(
+    allocator: Allocator,
+    prog: Prog,
+    input: anytype,
+    output: anytype,
+    options: interp.Options,
+    comptime Memory: type,
+) !void {
+    var int = try interp.Interp(@TypeOf(input), @TypeOf(output), Memory).init(allocator, prog, input, output, options);
+    defer int.deinit();
+    while (int.step()) |status| switch (status) {
+        .halted => break,
+        .breakpoint => int.pc += 1, // TODO: debugger
+        .running => {},
+    } else |err| return err;
 }
 
 fn fatal(comptime format: []const u8, args: anytype) noreturn {
