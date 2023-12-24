@@ -148,17 +148,16 @@ fn apply(o: *Condense, prog: Prog) !void {
                 });
             },
             .out => {
-                // Any pending op at the output cell needs to be flushed so the
-                // effects are visible to the output instruction, but the output
-                // instruction will not change the value of the cell, so any
-                // known value can be preserved after the flush.
-                const known_value = o.getKnownValue(eff_offset);
-                try o.flushOpAt(eff_offset);
-                if (known_value) |v| {
-                    try o.ops.put(o.allocator, eff_offset, .{
-                        .known_value = v,
+                if (o.getKnownValue(eff_offset)) |v| {
+                    try o.insts.append(o.allocator, .{
+                        .tag = .out_value,
+                        .value = v,
+                        .offset = undefined,
+                        .extra = undefined,
                     });
+                    continue;
                 }
+                try o.flushOpAt(eff_offset);
                 try o.insts.append(o.allocator, .{
                     .tag = .out,
                     .value = value,
@@ -166,6 +165,12 @@ fn apply(o: *Condense, prog: Prog) !void {
                     .extra = extra,
                 });
             },
+            .out_value => try o.insts.append(o.allocator, .{
+                .tag = .out_value,
+                .value = value,
+                .offset = offset,
+                .extra = extra,
+            }),
             .loop_start => {
                 if (o.getKnownValue(o.pending_move)) |v| {
                     if (v == 0) {
@@ -388,8 +393,7 @@ test "initial cells known to be 0" {
         \\breakpoint
     ,
         \\in @ 3
-        \\set 5 @ 4
-        \\out @ 4
+        \\out-value 5
         \\set 2
         \\set 30 @ 1
         \\set 23 @ 2

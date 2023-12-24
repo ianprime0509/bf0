@@ -36,6 +36,8 @@ pub const Inst = struct {
         in,
         /// `out(mem[mp + offset])`
         out,
+        /// `out(value)`
+        out_value,
         /// `if (mem[mp] == 0) pc += extra`
         ///
         /// Guaranteed to be balanced with `loop_end`.
@@ -71,6 +73,7 @@ pub const Inst = struct {
         m.set(.seek, .{ .name = "seek", .value = .used, .offset = .used, .extra = .used });
         m.set(.in, .{ .name = "in", .value = .unused, .offset = .used, .extra = .unused });
         m.set(.out, .{ .name = "out", .value = .unused, .offset = .used, .extra = .unused });
+        m.set(.out_value, .{ .name = "out-value", .value = .used, .offset = .unused, .extra = .unused });
         m.set(.loop_start, .{ .name = "loop-start", .value = .unused, .offset = .unused, .extra = .internal_only });
         m.set(.loop_end, .{ .name = "loop-end", .value = .unused, .offset = .unused, .extra = .internal_only });
         break :meta m;

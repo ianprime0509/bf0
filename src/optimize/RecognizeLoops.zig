@@ -48,6 +48,7 @@ fn apply(o: *RecognizeLoops, prog: Prog) !void {
             .add_mul,
             .in,
             .out,
+            .out_value,
             .move,
             .seek,
             => try o.insts.append(o.allocator, .{
@@ -115,6 +116,7 @@ fn processMathLoop(
             .seek,
             .in,
             .out,
+            .out_value,
             .loop_start,
             => return false,
             .loop_end => unreachable,
@@ -185,6 +187,7 @@ fn processMoveLoop(
             .seek,
             .in,
             .out,
+            .out_value,
             .loop_start,
             .loop_end,
             => return false,

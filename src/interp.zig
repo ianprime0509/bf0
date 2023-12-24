@@ -84,6 +84,7 @@ pub fn Interp(comptime InputReader: type, comptime OutputWriter: type, comptime 
                     }
                 },
                 .out => try int.output.writeByte(int.memory.get(int.offsets[int.pc])),
+                .out_value => try int.output.writeByte(int.values[int.pc]),
                 .loop_start => if (int.memory.get(0) == 0) {
                     int.pc += int.extras[int.pc] + 1;
                     return .running;
