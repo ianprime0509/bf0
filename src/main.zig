@@ -131,9 +131,17 @@ pub fn main() !void {
         try std.io.getStdIn().readToEndAlloc(allocator, std.math.maxInt(u32));
     defer allocator.free(source);
 
+    const prog_source, const static_input = switch (source_format) {
+        .brainfuck => if (mem.indexOfScalar(u8, source, '!')) |sep|
+            .{ source[0..sep], source[sep + 1 ..] }
+        else
+            .{ source, null },
+        .bytecode_text => .{ source, null },
+    };
+
     var prog = switch (source_format) {
-        .brainfuck => try Prog.parseBrainfuck(allocator, source),
-        .bytecode_text => try Prog.parseBytecodeText(allocator, source),
+        .brainfuck => try Prog.parseBrainfuck(allocator, prog_source),
+        .bytecode_text => try Prog.parseBytecodeText(allocator, prog_source),
     };
     defer prog.deinit(allocator);
     prog = try optimize.optimize(allocator, prog, opt_options);
@@ -143,8 +151,11 @@ pub fn main() !void {
         try prog.writeBytecodeText(stdout_buf.writer(), .{ .show_internal = true });
         try stdout_buf.flush();
     } else {
-        var stdin_buf = std.io.bufferedReader(std.io.getStdIn().reader());
-        const input = stdin_buf.reader();
+        var input_reader = if (static_input) |bytes|
+            InputReader.initBytes(bytes)
+        else
+            InputReader.initFile(std.io.getStdIn());
+        const input = input_reader.reader();
         // We can't buffer output in general, since some programs expect to have
         // output visible immediately.
         const output = std.io.getStdOut().writer();
@@ -179,6 +190,36 @@ fn fatal(comptime format: []const u8, args: anytype) noreturn {
     log.err(format, args);
     std.process.exit(1);
 }
+
+const InputReader = union(enum) {
+    bytes: BytesReader,
+    file: FileReader,
+
+    const BytesReader = std.io.FixedBufferStream([]const u8);
+    const FileReader = std.io.BufferedReader(4096, std.fs.File.Reader);
+    const Error = BytesReader.ReadError || FileReader.Error;
+
+    const Reader = std.io.Reader(*InputReader, Error, read);
+
+    fn initBytes(bytes: []const u8) InputReader {
+        return .{ .bytes = .{ .buffer = bytes, .pos = 0 } };
+    }
+
+    fn initFile(file: std.fs.File) InputReader {
+        return .{ .file = .{ .unbuffered_reader = file.reader() } };
+    }
+
+    fn reader(r: *InputReader) Reader {
+        return .{ .context = r };
+    }
+
+    fn read(r: *InputReader, bytes: []u8) Error!usize {
+        return switch (r.*) {
+            .bytes => |*br| try br.read(bytes),
+            .file => |*fr| try fr.read(bytes),
+        };
+    }
+};
 
 // Inspired by https://github.com/judofyr/parg
 const ArgIterator = struct {

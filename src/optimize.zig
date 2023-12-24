@@ -46,7 +46,8 @@ pub fn optimize(allocator: Allocator, prog: Prog, options: Options) Allocator.Er
     var p = prog;
     var i: u32 = 0;
     const max_iterations = if (passes.len == 0) 0 else options.max_iterations;
-    while (i < max_iterations) : (i += 1) {
+    while (i < max_iterations) {
+        i += 1;
         const init_hash = p.hash();
         for (passes) |pass| {
             const p_opt = try pass.apply(allocator, p);
@@ -56,6 +57,6 @@ pub fn optimize(allocator: Allocator, prog: Prog, options: Options) Allocator.Er
         const final_hash = p.hash();
         if (mem.eql(u8, &init_hash, &final_hash)) break;
     }
-    log.debug("completed optimization in {} iterations", .{i});
+    log.debug("completed optimization in {} iteration(s)", .{i});
     return p;
 }

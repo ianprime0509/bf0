@@ -34,6 +34,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = .{ .path = "src/exe_test_runner.zig" },
     });
     const programs: []const []const u8 = &.{
+        "cat",
+        "cat-provided-input",
         "hello",
         "third-party/numwarp",
         "third-party/rot13",
