@@ -1,0 +1,11 @@
+.{
+    .name = "bf0",
+    .version = "0.0.0",
+    .paths = .{
+        "README.md",
+        "LICENSE",
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -1,0 +1,22 @@
+.{
+    .name = "bf0-bench",
+    .version = "0.0.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+    .dependencies = .{
+        .bff = .{
+            .url = "git+https://github.com/apankrat/bff#f9e03ef793f46695b6ad81ed8cfc745a28c66b44",
+            .hash = "1220bb33fab4daaa0c488a506d3a2214c6b8d91298c9ab58c8b388d45cf4e00e7509",
+        },
+        .bff4 = .{
+            .url = "git+https://github.com/mazonka/code#a5b01cc83e6ea9202b02233ee3fb9f8f6f515ba2",
+            .hash = "1220aba5bc1027e0d4917879820f5d6247795ac4143e553a245b6691c08215f5fe4f",
+        },
+        .brainforked = .{
+            .url = "git+https://github.com/JohnCGriffin/BrainForked#ab96b84a7c3371b6b168dcaac79166488f3712ae",
+            .hash = "12207aae77df3cb3be3927ee5e615ce6b7ba8224d98458a870e64dcef87638be7e8a",
+        },
+    },
+}
