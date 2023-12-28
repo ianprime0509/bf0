@@ -6,6 +6,7 @@ const log = std.log;
 const Prog = @import("Prog.zig");
 const interp = @import("interp.zig");
 const optimize = @import("optimize.zig");
+const codegen = @import("codegen.zig");
 
 const usage =
     \\Usage: bf0 [options] [source]
@@ -15,6 +16,7 @@ const usage =
     \\
     \\Options:
     \\  -e, --eof=VALUE         Set VALUE on EOF (integer or 'no-change') (default: 0)
+    \\  -j, --jit               Enable JIT compilation
     \\  -m, --memory=TYPE       Set memory type ('paged' or 'mapped') (default: platform-specific)
     \\  -O, --optimize=LEVEL    Set optimization level (supported: 0-1) (default: 1)
     \\  --dump-bytecode         Dump bytecode rather than executing the program
@@ -67,6 +69,7 @@ pub fn main() !void {
     var opt_options: optimize.Options = .{};
     var dump_bytecode = false;
     var source_format: enum { brainfuck, bytecode_text } = .brainfuck;
+    var jit = false;
     var memory_type: enum { paged, mapped } = if (interp.MappedMemory.supported) .mapped else .paged;
 
     var args: ArgIterator = .{ .args = try std.process.argsWithAllocator(allocator) };
@@ -88,6 +91,8 @@ pub fn main() !void {
                 } else |_| {
                     fatal("invalid value for --eof: {s}", .{eof});
                 }
+            } else if (option.is('j', "jit")) {
+                jit = true;
             } else if (option.is('m', "memory")) {
                 const memory = args.optionValue() orelse fatal("expected value for -m, --memory", .{});
                 memory_type = if (mem.eql(u8, memory, "paged"))
@@ -159,12 +164,20 @@ pub fn main() !void {
         // We can't buffer output in general, since some programs expect to have
         // output visible immediately.
         const output = std.io.getStdOut().writer();
-        switch (memory_type) {
+        if (jit) {
+            if (interp.MappedMemory.supported and codegen.generateNative != null) {
+                if (options.eof != .value or options.eof.value != 0) fatal("JIT currently only supports EOF 0 behavior", .{});
+                if (memory_type != .mapped) fatal("JIT requires mapped memory", .{});
+                try runJit(allocator, prog, input, output);
+            } else {
+                fatal("JIT not supported on this platform", .{});
+            }
+        } else switch (memory_type) {
             .paged => try run(allocator, prog, input, output, options, interp.PagedMemory),
             .mapped => if (interp.MappedMemory.supported)
                 try run(allocator, prog, input, output, options, interp.MappedMemory)
             else
-                fatal("mapped memory not supported", .{}),
+                fatal("mapped memory not supported on this platform", .{}),
         }
     }
 }
@@ -184,6 +197,53 @@ fn run(
         .breakpoint => int.pc += 1, // TODO: debugger
         .running => {},
     } else |err| return err;
+}
+
+fn runJit(
+    allocator: Allocator,
+    prog: Prog,
+    input: anytype,
+    output: anytype,
+) !void {
+    var memory = try interp.MappedMemory.init(allocator);
+    defer memory.deinit();
+
+    const Input = @TypeOf(input);
+    const inputFn = struct {
+        fn in(ctx: *const anyopaque) callconv(.C) i32 {
+            const reader: *const Input = @ptrCast(@alignCast(ctx));
+            return reader.readByte() catch |err| return -@as(i32, @intFromError(err));
+        }
+    }.in;
+    const Output = @TypeOf(output);
+    const outputFn = struct {
+        fn out(ctx: *const anyopaque, b: u8) callconv(.C) i32 {
+            const writer: *const Output = @ptrCast(@alignCast(ctx));
+            writer.writeByte(b) catch |err| return -@as(i32, @intFromError(err));
+            return 0;
+        }
+    }.out;
+
+    var jit_code = try codegen.generateNative.?(std.heap.page_allocator, prog);
+    defer std.heap.page_allocator.free(jit_code);
+    // This is safe to do since we're using page_allocator; it will not matter
+    // when freeing the pages.
+    jit_code.len = mem.alignForward(usize, jit_code.len, mem.page_size);
+    try std.os.mprotect(jit_code, std.os.PROT.EXEC);
+    // Before freeing the JIT code, we will need to make it writable again.
+    // Hopefully this can't fail; we can't reasonably handle the error even if
+    // it does.
+    defer std.os.mprotect(jit_code, std.os.PROT.READ | std.os.PROT.WRITE) catch unreachable;
+
+    const jitEntry: *const fn (
+        [*]u8,
+        *const fn (*const anyopaque) callconv(.C) i32,
+        *const anyopaque,
+        *const fn (*const anyopaque, u8) callconv(.C) i32,
+        *const anyopaque,
+    ) i32 = @ptrCast(@alignCast(jit_code.ptr));
+    const out = jitEntry(memory.memory.ptr, inputFn, &input, outputFn, &output);
+    if (out < 0) return @errorFromInt(@as(u16, @intCast(-out)));
 }
 
 fn fatal(comptime format: []const u8, args: anytype) noreturn {
